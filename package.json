@@ -1,0 +1,26 @@
+{
+  "name": "gpd5cachyautotdp",
+  "version": "1.1.0",
+  "description": "Automatic TDP control by target FPS and GPD WIN 5 fan curve for CachyOS",
+  "author": "GPD5CachyAutoTDP Contributors",
+  "license": "MIT",
+  "scripts": {
+    "build": "rollup -c"
+  },
+  "dependencies": {
+    "@decky/api": "^1.1.2",
+    "@decky/ui": "^2.0.0",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@decky/rollup": "latest",
+    "typescript": "^5.0.0",
+    "rollup": "^4.0.0",
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "tslib": "^2.6.2"
+  }
+}
