@@ -1,6 +1,6 @@
 Bundled RyzenAdj slot
 
-GPD5CachyAutoTDP 1.1.0 is prepared to prefer this directory's `ryzenadj` executable.
+GPD5CachyAutoTDP 1.2.0 is prepared to prefer this directory's `ryzenadj` executable.
 The exact Linux executable shipped by PowerControl v3.14.2 is tracked upstream at:
 https://github.com/mengmeet/PowerControl/blob/v3.14.2/bin/ryzenadj
 

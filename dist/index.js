@@ -12,7 +12,7 @@
   var ButtonItem = DFL && DFL.ButtonItem;
   var staticClasses = DFL && DFL.staticClasses;
 
-  var DEFAULT_CONFIG = {enabled:false,target_fps:40,min_tdp:15,max_tdp:55,initial_tdp:35,mangohud_display:false,check_interval_sec:3,hysteresis_threshold:5,fan_control:{enabled:true}};
+  var DEFAULT_CONFIG = {enabled:false,target_fps:40,min_tdp:15,max_tdp:55,initial_tdp:35,load_boost_enabled:true,load_boost_threshold:95,mangohud_display:false,check_interval_sec:3,hysteresis_threshold:5,fan_control:{enabled:true}};
   function unwrap(v){
     if(v && typeof v==='object' && !Array.isArray(v)){
       if(Object.prototype.hasOwnProperty.call(v,'result') && (Object.prototype.hasOwnProperty.call(v,'success') || Object.keys(v).length<=2)) return v.result;
@@ -57,12 +57,16 @@
           h(Row,{label:'Current TDP',value:t.current_tdp!=null?num(t.current_tdp,0).toFixed(1)+' W':'—'}),
           h(Row,{label:'TDP source',value:t.tdp_source==='setpoint'?'setpoint (ryzenadj readback unavailable)':(t.tdp_source||'—')}),
           h(Row,{label:'Average FPS',value:m.last_fps!=null?num(m.last_fps,0).toFixed(1):'—'}),
+          h(Row,{label:'CPU load',value:m.last_cpu_load!=null?num(m.last_cpu_load,0).toFixed(1)+'%':'—'}),
+          h(Row,{label:'GPU load',value:m.last_gpu_load!=null?num(m.last_gpu_load,0).toFixed(1)+'%':'—'}),
           h(Row,{label:'Controller',value:m.state||'stopped'}),
           h(PanelSectionRow,null,h(ToggleField,{label:'Auto TDP',description:enabled?'Running':'Stopped',checked:enabled,onChange:toggle})),
           h(PanelSectionRow,null,h(SliderField,{label:'Target FPS',value:target,min:30,max:120,step:5,showValue:true,onChange:function(v){updateMonitorParam('target_fps',v);}})),
-          h(PanelSectionRow,null,h(SliderField,{label:'Start TDP',description:'Used only when no previous AutoTDP setpoint exists',value:initialTdp,min:5,max:55,step:1,showValue:true,valueSuffix:' W',onChange:function(v){save('initial_tdp',v);}})),
+          h(PanelSectionRow,null,h(SliderField,{label:'Start TDP',description:enabled?'Used when Auto TDP starts':'Applied when Auto TDP is switched off',value:initialTdp,min:5,max:55,step:1,showValue:true,valueSuffix:' W',onChange:async function(v){var ok=await save('initial_tdp',v);if(ok&&!enabled)await rpc('set_tdp',{value:v});}})),
           h(PanelSectionRow,null,h(SliderField,{label:'Minimum TDP',value:minTdp,min:5,max:maxTdp,step:1,showValue:true,valueSuffix:' W',onChange:function(v){updateMonitorParam('min_tdp',v);}})),
           h(PanelSectionRow,null,h(SliderField,{label:'Maximum TDP',value:maxTdp,min:minTdp,max:55,step:1,showValue:true,valueSuffix:' W',onChange:function(v){updateMonitorParam('max_tdp',v);}})),
+          h(PanelSectionRow,null,h(ToggleField,{label:'High-load TDP boost',description:cfg.load_boost_enabled?'CPU >'+num(cfg.load_boost_threshold,95)+'% boosts TDP even when FPS is already on target; GPU >'+num(cfg.load_boost_threshold,95)+'% boosts only when FPS is below target':'Disabled',checked:!!cfg.load_boost_enabled,onChange:async function(v){var ok=await save('load_boost_enabled',v);if(ok)await refresh();}})),
+          h(PanelSectionRow,null,h(SliderField,{label:'High-load threshold',value:num(cfg.load_boost_threshold,95),min:90,max:100,step:1,showValue:true,valueSuffix:'%',onChange:function(v){save('load_boost_threshold',v);}})),
         ),
         h(PanelSection,{title:'Fan curve'},
           h(Row,{label:'Controller',value:f.available?'gpdfan / PWM':'not detected'}),
@@ -73,7 +77,7 @@
           h(PanelSectionRow,null,h(ToggleField,{label:'Fan control',description:(cfg.fan_control&&cfg.fan_control.enabled)?'Curve enabled':'Curve disabled',checked:!!(cfg.fan_control&&cfg.fan_control.enabled),disabled:!f.available,onChange:async function(v){var ok=await rpc(v?'enable_fan_control':'disable_fan_control');if(ok)await refresh();}})),
           !f.available&&h(PanelSectionRow,null,h('span',{style:{color:'#94a3b8'}},'PWM fan controller not detected.'))
         ),
-        h(PanelSection,{title:'FPS source'},h(Row,{label:'Source',value:m.fps_source||'MangoHud / mangoapp CSV'}),h(PanelSectionRow,null,h(ToggleField,{label:'MangoHud display',description:cfg.mangohud_display?'HUD visible':'HUD hidden (logging remains active)',checked:!!cfg.mangohud_display,onChange:async function(v){var ok=await rpc('set_mangohud_display',{enabled:v});if(ok)await refresh();}})))
+        h(PanelSection,{title:'FPS source / requirements'},h(PanelSectionRow,null,h('span',{style:{color:'#dbeafe'}},'Keep system MangoHud enabled. For correct AutoTDP behavior, disable FPS limits both in the game and in the system/gamescope. The plugin needs uncapped FPS to see the real performance headroom.')),h(Row,{label:'Source',value:m.fps_source||'MangoHud / mangoapp CSV'}),h(PanelSectionRow,null,h(ToggleField,{label:'MangoHud display',description:cfg.mangohud_display?'HUD visible':'HUD hidden (logging remains active)',checked:!!cfg.mangohud_display,onChange:async function(v){var ok=await rpc('set_mangohud_display',{enabled:v});if(ok)await refresh();}})))
       );
     }
     return {title:h('div',{className:staticClasses&&staticClasses.Title||''},'GPD5CachyAutoTDP'),content:h(Content),icon:h('span',null,'⚡'),onDismount:function(){}};

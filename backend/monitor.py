@@ -5,13 +5,16 @@ from typing import Any
 from .tdp_controller import TDPController, TDPControllerException
 from .fps_reader import FPSReader
 logger=logging.getLogger(__name__)
+
 class TDPMonitorException(Exception): pass
+
 class TDPMonitor:
     STATE_STOPPED='stopped'; STATE_RUNNING='running'; STATE_WAITING='waiting'; STATE_ERROR='error'
     def __init__(self, tdp: TDPController, config_manager: Any, fan=None):
         self.tdp=tdp; self.cfg=config_manager; self.fan=fan; self.fps=FPSReader(); self._lock=threading.Lock(); self._stop=threading.Event(); self._thread=None
-        self._running=False; self.state=self.STATE_STOPPED; self.target_fps=40; self.min_tdp=15.; self.max_tdp=55.; self.last_fps=None; self.last_tdp=None
-        self._stats={'adjustments_made':0,'errors':0,'last_error':None,'total_runtime_sec':0}
+        self._running=False; self.state=self.STATE_STOPPED; self.target_fps=40; self.min_tdp=15.; self.max_tdp=55.; self.last_fps=None; self.last_cpu_load=None; self.last_gpu_load=None; self.last_tdp=None
+        self._stats={'adjustments_made':0,'errors':0,'last_error':None,'total_runtime_sec':0,'load_boosts_made':0}
+
     def start(self,min_tdp=15.,max_tdp=55.,target_fps=40,initial_tdp=None):
         if not self.tdp.available(): raise TDPMonitorException('No real TDP backend available')
         if min_tdp>max_tdp or target_fps<1: raise TDPMonitorException('Invalid monitor parameters')
@@ -23,74 +26,91 @@ class TDPMonitor:
                 saved_tdp=self.cfg.get_value('last_tdp',None)
                 cur=saved_tdp if saved_tdp is not None else (initial_tdp if initial_tdp is not None else self.cfg.get_value('initial_tdp',35))
             cur=max(self.min_tdp,min(self.max_tdp,float(cur)))
-            try:
-                self.tdp.set_tdp(cur)
+            try:self.tdp.set_tdp(cur)
             except Exception as e:
-                self.state=self.STATE_ERROR; self._stats['last_error']=str(e); self._stats['errors']+=1
-                raise
-            self.last_tdp=cur
-            self.cfg.set_value('last_tdp',cur)
-            self._running=True; self.state=self.STATE_WAITING
+                self.state=self.STATE_ERROR; self._stats['last_error']=str(e); self._stats['errors']+=1; raise
+            self.last_tdp=cur; self.cfg.set_value('last_tdp',cur); self._running=True; self.state=self.STATE_WAITING
         self._stop.clear(); self._thread=threading.Thread(target=self._loop,daemon=True,name='AutoTDP'); self._thread.start(); return True
-    def stop(self):
+
+    def stop(self, reset_to_initial=True):
         with self._lock:self._running=False
         self._stop.set()
         if self._thread and self._thread.is_alive(): self._thread.join(3)
+        reset_error=None
+        if reset_to_initial:
+            try:
+                initial=float(self.cfg.get_value('initial_tdp',35))
+                initial=max(self.tdp.min_w,min(self.tdp.max_w,initial))
+                self.tdp.set_tdp(initial)
+                self.last_tdp=initial
+                self.cfg.set_value('last_tdp',initial)
+            except Exception as e:
+                reset_error=str(e); logger.error('Failed to restore initial TDP: %s',e,exc_info=True)
         with self._lock:self.state=self.STATE_STOPPED
+        if reset_error: raise TDPMonitorException(reset_error)
         return True
+
     def set_parameters(self,min_tdp=None,max_tdp=None,target_fps=None):
         with self._lock:
             if min_tdp is not None:self.min_tdp=float(min_tdp)
             if max_tdp is not None:self.max_tdp=float(max_tdp)
-            if self.min_tdp>self.max_tdp: self.min_tdp,self.max_tdp=self.max_tdp,self.min_tdp
+            if self.min_tdp>self.max_tdp:self.min_tdp,self.max_tdp=self.max_tdp,self.min_tdp
             if target_fps is not None:self.target_fps=int(target_fps)
         return True
+
+    def _set(self, cur, delta, load_boost=False):
+        new=max(self.min_tdp,min(self.max_tdp,cur+delta))
+        if abs(new-cur)<0.5:return False
+        self.tdp.set_tdp(new); self.last_tdp=new; self.cfg.set_value('last_tdp',new); self._stats['adjustments_made']+=1
+        if load_boost:self._stats['load_boosts_made']+=1
+        return True
+
     def _loop(self):
         started=time.time(); last_change=0.; last_direction=0
         while not self._stop.is_set():
             try:
-                fps=self.fps.read(); self.last_fps=fps
-                cur=self.tdp.read_tdp()
-                if cur is not None:self.last_tdp=cur
-                # Strix Halo ryzenadj cannot expose the power metric table on this setup.
-                # In that case last_tdp is our verified setpoint and is sufficient for control.
+                metrics=self.fps.read_metrics(); fps=metrics.get('fps'); cpu=metrics.get('cpu_load'); gpu=metrics.get('gpu_load')
+                self.last_fps=fps; self.last_cpu_load=cpu; self.last_gpu_load=gpu
+                cur_read=self.tdp.read_tdp()
+                if cur_read is not None:self.last_tdp=cur_read
                 if fps is None or self.last_tdp is None:
                     self.state=self.STATE_WAITING
                 else:
-                    cur=float(self.last_tdp)
-                    err=float(fps)-float(self.target_fps)
-                    # Adaptive convergence: far from target use larger jumps;
-                    # at/above target probe downward by exactly 1 W. This is
-                    # important when FPS is capped by gamescope/display (e.g. 60 FPS):
-                    # we keep reducing TDP until FPS actually falls, then restore 1 W.
-                    if err < -10.0:
-                        direction, step = 1, 5.0
-                    elif err < -5.0:
-                        direction, step = 1, 2.0
-                    elif err < 0.0:
-                        direction, step = 1, 1.0
-                    elif err >= 10.0:
-                        direction, step = -1, 5.0
-                    elif err > 5.0:
-                        direction, step = -1, 2.0
-                    else:
-                        direction, step = -1, 1.0
+                    cur=float(self.last_tdp); threshold=float(self.cfg.get_value('load_boost_threshold',95)); boost_enabled=bool(self.cfg.get_value('load_boost_enabled',True))
+                    high_cpu=cpu is not None and cpu>threshold
+                    high_gpu=gpu is not None and gpu>threshold
+                    # CPU load boost is intentionally independent of FPS. This is
+                    # important for shader compilation: FPS can remain above target
+                    # while a CPU-bound compile runs at 97-100% and a low TDP makes it painfully slow.
+                    # GPU load boost is gated by FPS deficit, otherwise a hard FPS cap
+                    # could make a fully loaded GPU force the system to max TDP.
+                    load_boost = boost_enabled and (high_cpu or (high_gpu and fps < self.target_fps))
                     now=time.time()
-                    if direction == last_direction and now-last_change>=1.5:
-                        new=max(self.min_tdp,min(self.max_tdp,cur + step*direction))
-                        if abs(new-cur)>=0.5:
-                            self.tdp.set_tdp(new); self.last_tdp=new; self.cfg.set_value('last_tdp',new); self._stats['adjustments_made']+=1; last_change=now
-                    elif direction != last_direction:
-                        # Allow the first correction immediately after crossing
-                        # the target / changing direction, without waiting an extra cycle.
-                        new=max(self.min_tdp,min(self.max_tdp,cur + step*direction))
-                        if abs(new-cur)>=0.5:
-                            self.tdp.set_tdp(new); self.last_tdp=new; self.cfg.set_value('last_tdp',new); self._stats['adjustments_made']+=1; last_change=now
-                    last_direction=direction; self.state=self.STATE_RUNNING
+                    if load_boost:
+                        # Sustained high load gets a decisive +5 W step. The max TDP
+                        # remains the hard safety/configuration ceiling.
+                        if now-last_change>=1.5:
+                            if self._set(cur,5.0,load_boost=True): last_change=now
+                        last_direction=1
+                    else:
+                        err=float(fps)-float(self.target_fps)
+                        if err < -10.0: direction,step=1,5.0
+                        elif err < -5.0: direction,step=1,2.0
+                        elif err < 0.0: direction,step=1,1.0
+                        elif err >= 10.0: direction,step=-1,5.0
+                        elif err > 5.0: direction,step=-1,2.0
+                        else: direction,step=-1,1.0
+                        if direction == last_direction and now-last_change>=1.5:
+                            if self._set(cur,step*direction): last_change=now
+                        elif direction != last_direction:
+                            if self._set(cur,step*direction): last_change=now
+                        last_direction=direction
+                    self.state=self.STATE_RUNNING
                 self._stats['total_runtime_sec']=int(time.time()-started)
             except Exception as e:
                 logger.error('monitor: %s',e,exc_info=True); self._stats['errors']+=1; self._stats['last_error']=str(e); self.state=self.STATE_ERROR
             self._stop.wait(float(self.cfg.get_value('check_interval_sec',3)))
+
     def get_stats(self):
         with self._lock:
-            return {'state':self.state,'running':self._running,'target_fps':self.target_fps,'min_tdp':self.min_tdp,'max_tdp':self.max_tdp,'last_fps':self.last_fps,'last_tdp':self.last_tdp,**self._stats,'fps_source':self.fps.path and str(self.fps.path)}
+            return {'state':self.state,'running':self._running,'target_fps':self.target_fps,'min_tdp':self.min_tdp,'max_tdp':self.max_tdp,'last_fps':self.last_fps,'last_cpu_load':self.last_cpu_load,'last_gpu_load':self.last_gpu_load,'load_boost_enabled':bool(self.cfg.get_value('load_boost_enabled',True)),'load_boost_threshold':float(self.cfg.get_value('load_boost_threshold',95)),'last_tdp':self.last_tdp,**self._stats,'fps_source':self.fps.path and str(self.fps.path)}

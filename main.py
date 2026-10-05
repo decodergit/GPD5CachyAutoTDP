@@ -99,7 +99,14 @@ class Plugin:
    ok=self.monitor.start(min_tdp,max_tdp,target_fps,self.cfg.get_value('initial_tdp',35)); self.cfg.set_value('enabled',ok); return ok
   except Exception as e:logger.exception('start_monitor: %s',e);return False
  async def stop_monitor(self):
-  ok=self.monitor.stop();self.cfg.set_value('enabled',False);return ok
+  try:
+   ok=self.monitor.stop(reset_to_initial=True)
+   self.cfg.set_value('enabled',False)
+   return ok
+  except Exception as e:
+   logger.exception('stop_monitor: %s',e)
+   self.cfg.set_value('enabled',False)
+   return False
  async def update_monitor_params(self,min_tdp=None,max_tdp=None,target_fps=None):
   try:
    ok=self.monitor.set_parameters(min_tdp,max_tdp,target_fps)

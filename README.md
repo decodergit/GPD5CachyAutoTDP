@@ -1,8 +1,8 @@
-# GPD5CachyAutoTDP 1.1.0
+# GPD5CachyAutoTDP 1.2.0
 
 Decky Loader plugin for **GPD WIN 5 / AMD Ryzen AI MAX+ 395 (Strix Halo) / CachyOS Handheld**.
 
-The plugin automatically adjusts TDP to the selected target FPS and controls the GPD WIN 5 fan curve.
+The plugin automatically adjusts TDP to the selected target FPS, boosts TDP during sustained high CPU/GPU load, and controls the GPD WIN 5 fan curve.
 
 
 ## Project status and purpose
@@ -32,6 +32,8 @@ PowerControl is therefore a **first-launch dependency**, not a permanent runtime
 
 **MangoHud must always be enabled in the system while using GPD5CachyAutoTDP.** The plugin uses the continuous mangoapp/MangoHud CSV stream as its FPS source. Do not disable MangoHud globally.
 
+**Recommended system/game setup:** keep system MangoHud/mangoapp enabled, and **disable FPS limiting both in the game and in the system/gamescope** while AutoTDP is active. Otherwise a 60 FPS (or other) cap can hide available performance and interfere with the controller's ability to find the minimum TDP.
+
 GPD5CachyAutoTDP reads the live FPS stream from MangoHud/mangoapp CSV logs. MangoHud must remain active while a game is being controlled.
 
 The plugin does **not** cache one CSV forever. Every few seconds it scans for the newest `mangoapp_*.csv`. If MangoHud/mangoapp is restarted and creates a new CSV, the plugin switches to the new file automatically. If the current CSV stops updating for several seconds, FPS is treated as unavailable rather than continuing to use stale values.
@@ -51,6 +53,17 @@ If `mangohudctl` is not available, the plugin falls back to the user's `~/.confi
 
 **MangoHud/mangoapp must remain enabled in the CachyOS Handheld system.** Do not disable the system MangoHud/mangoapp service/session integration: GPD5CachyAutoTDP obtains FPS from its `mangoapp_*.csv` logs.
 
+## High-load TDP boost
+
+The **High-load TDP boost** option adds CPU/GPU utilization to the AutoTDP decision. By default the threshold is **95%**.
+
+- If **CPU load stays above the threshold**, TDP is increased by **5 W** even when FPS is already at/above the target. This is intentional for CPU-bound work such as **shader compilation**, where FPS may look perfectly fine while a low TDP makes compilation much slower.
+- If **GPU load stays above the threshold**, TDP is increased only when FPS is below the target. This prevents a hard 60 FPS cap from making a fully loaded GPU push TDP to the maximum unnecessarily.
+- The configured Maximum TDP remains the hard ceiling.
+- CPU/GPU load shown in the interface is the same Mangoapp telemetry used by the controller.
+
+The threshold can be changed in the interface (90–100%).
+
 ## Automatic TDP algorithm
 
 The controller uses adaptive steps:
@@ -63,6 +76,8 @@ The controller uses adaptive steps:
 When the target is reached, the controller deliberately reduces TDP by 1 W at a time until FPS actually falls below the target. It then restores 1 W. This is important for hard FPS caps such as 60 FPS: a reported 60 FPS does not mean that the current TDP is already minimal.
 
 ## Persisted settings
+
+When **Auto TDP is switched off**, the plugin immediately restores the configured **Start TDP** value. This is deliberate: disabling automatic control returns the device to a predictable manual TDP instead of leaving the last adaptive setpoint active.
 
 The following settings survive plugin restarts:
 

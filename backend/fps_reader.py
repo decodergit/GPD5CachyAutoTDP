@@ -97,53 +97,44 @@ class FPSReader:
         return max((Path(x) for x in current), key=lambda x: current[str(x)])
 
     @staticmethod
-    def _fps_values(path: Path) -> List[float]:
-        # CachyOS mangoapp CSVs have two header rows: a system-info row
-        # followed by the actual frame-metrics header beginning with `fps`.
-        # DictReader on the first row therefore loses the real `fps` column.
-        with path.open('r', newline='', errors='replace') as f:
-            rows = list(csv.reader(f))
-
-        header_idx = None
-        for i, row in enumerate(rows[:10]):
-            cells = [str(x).strip().lower() for x in row]
-            if 'fps' in cells and ('frametime' in cells or 'cpu_load' in cells):
-                header_idx = i
-                break
-
-        vals=[]
-        if header_idx is not None:
-            header = rows[header_idx]
-            try:
-                fps_idx = next(i for i, x in enumerate(header) if str(x).strip().lower() == 'fps')
-            except StopIteration:
-                return vals
-            for row in rows[header_idx + 1:]:
-                if fps_idx >= len(row):
-                    continue
-                raw = str(row[fps_idx]).strip()
-                try:
-                    vals.append(float(raw))
-                except ValueError:
-                    pass
+    def _metric_values(path: Path, metric: str) -> List[float]:
+        """Read a numeric metric from Mangoapp CSVs, including CachyOS two-header CSVs."""
+        vals: List[float] = []
+        try:
+            with path.open('r', newline='', errors='replace') as f:
+                rows = list(csv.reader(f))
+        except OSError:
             return vals
-
-        # Fallback for conventional one-header MangoHud CSVs.
         if not rows:
             return vals
-        header = [str(x).strip() for x in rows[0]]
-        keys = {k.lower(): i for i, k in enumerate(header)}
-        fps_idx = next((keys[k] for k in ('fps', 'fps_avg', 'avg_fps') if k in keys), None)
-        if fps_idx is None:
+
+        # CachyOS mangoapp CSV: system-info header first, frame-metrics header second.
+        header_idx = None
+        for i, row in enumerate(rows[:5]):
+            keys = [str(x).strip().lower() for x in row]
+            if metric.lower() in keys:
+                header_idx = i
+                break
+        if header_idx is None:
             return vals
-        for row in rows[1:]:
-            if fps_idx >= len(row):
+        keys = [str(x).strip().lower() for x in rows[header_idx]]
+        try:
+            idx = keys.index(metric.lower())
+        except ValueError:
+            return vals
+        for row in rows[header_idx + 1:]:
+            if idx >= len(row):
                 continue
             try:
-                vals.append(float(str(row[fps_idx]).strip()))
-            except ValueError:
+                vals.append(float(str(row[idx]).strip()))
+            except (ValueError, TypeError):
                 pass
         return vals
+
+    @classmethod
+    def _fps_values(cls, path: Path) -> List[float]:
+        vals = cls._metric_values(path, 'fps')
+        return [v for v in vals if 0 < v < 1000]
 
     def read(self) -> Optional[float]:
         p = self._latest()
@@ -174,7 +165,35 @@ class FPSReader:
             logger.debug('FPS CSV read failed: %s', e)
             return None
 
+    def read_metrics(self) -> Dict[str, Optional[float]]:
+        """Return recent average FPS/CPU/GPU load from the current live CSV."""
+        p = self._latest()
+        if not p:
+            return {'fps': None, 'cpu_load': None, 'gpu_load': None}
+        try:
+            if time.time() - p.stat().st_mtime > self.source_stale_after:
+                return {'fps': None, 'cpu_load': None, 'gpu_load': None}
+            if p != self.path:
+                self.path = p
+                self.last_fps = None
+                self.last_rows = 0
+            def avg(metric: str, lo: float, hi: float) -> Optional[float]:
+                values = [v for v in self._metric_values(p, metric) if lo <= v <= hi]
+                if not values:
+                    return None
+                return sum(values[-30:]) / min(30, len(values))
+            fps = avg('fps', 0.001, 1000.0)
+            cpu = avg('cpu_load', 0.0, 100.0)
+            gpu = avg('gpu_load', 0.0, 100.0)
+            if fps is not None:
+                self.last_fps = fps
+            return {'fps': fps, 'cpu_load': cpu, 'gpu_load': gpu}
+        except Exception as e:
+            logger.debug('MangoHud metric read failed: %s', e)
+            return {'fps': None, 'cpu_load': None, 'gpu_load': None}
+
     def stats(self) -> Dict:
-        return {'available': self._latest() is not None, 'fps': self.read(),
+        metrics = self.read_metrics()
+        return {'available': self._latest() is not None, 'fps': metrics['fps'], 'cpu_load': metrics['cpu_load'], 'gpu_load': metrics['gpu_load'],
                 'source': str(self.path) if self.path else None,
                 'logging_started_by_plugin': self.started_logging}

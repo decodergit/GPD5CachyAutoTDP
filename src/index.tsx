@@ -6,7 +6,7 @@ import { PanelSection, PanelSectionRow, SliderField, ToggleField, ButtonItem, st
 type ServerAPI = { callPluginMethod: (method: string, args?: Record<string, unknown>) => Promise<any> };
 
 const DEFAULT_CONFIG = {
-  enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 55, initial_tdp: 35, mangohud_display: false,
+  enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 55, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false,
   check_interval_sec: 3, hysteresis_threshold: 5,
   fan_control: { enabled: true },
 };
@@ -117,14 +117,18 @@ function makeContent(serverAPI: ServerAPI) {
         <Row label="Current TDP" value={t.current_tdp!=null ? `${safeNum(t.current_tdp,0).toFixed(1)} W` : '—'}/>
         <Row label="TDP source" value={t.tdp_source==='setpoint' ? 'setpoint (ryzenadj readback unavailable)' : (t.tdp_source || '—')}/>
         <Row label="Average FPS" value={m.last_fps!=null ? safeNum(m.last_fps,0).toFixed(1) : '—'}/>
+        <Row label="CPU load" value={m.last_cpu_load!=null ? `${safeNum(m.last_cpu_load,0).toFixed(1)}%` : '—'}/>
+        <Row label="GPU load" value={m.last_gpu_load!=null ? `${safeNum(m.last_gpu_load,0).toFixed(1)}%` : '—'}/>
         <Row label="Controller" value={m.state || 'stopped'}/>
         <PanelSectionRow>
           <ToggleField label="Auto TDP" description={enabled?'Running':'Stopped'} checked={enabled} onChange={toggle}/>
         </PanelSectionRow>
         <PanelSectionRow><SliderField label="Target FPS" value={target} min={30} max={120} step={5} showValue onChange={(v:number)=>updateMonitorParam('target_fps',v)}/></PanelSectionRow>
-        <PanelSectionRow><SliderField label="Start TDP" description="Used when no previous AutoTDP setpoint exists" value={initialTdp} min={5} max={55} step={1} showValue valueSuffix=" W" onChange={(v:number)=>save('initial_tdp',v)}/></PanelSectionRow>
+        <PanelSectionRow><SliderField label="Start TDP" description={enabled?'Used when Auto TDP starts':'Applied when Auto TDP is switched off'} value={initialTdp} min={5} max={55} step={1} showValue valueSuffix=" W" onChange={async(v:number)=>{const ok=await save('initial_tdp',v);if(ok && !enabled) await rpc('set_tdp',{value:v});}}/></PanelSectionRow>
         <PanelSectionRow><SliderField label="Minimum TDP" value={minTdp} min={5} max={maxTdp} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('min_tdp',v)}/></PanelSectionRow>
         <PanelSectionRow><SliderField label="Maximum TDP" value={maxTdp} min={minTdp} max={55} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('max_tdp',v)}/></PanelSectionRow>
+        <PanelSectionRow><ToggleField label="High-load TDP boost" description={cfg.load_boost_enabled?`CPU >${safeNum(cfg.load_boost_threshold,95)}% boosts TDP even when FPS is already on target; GPU >${safeNum(cfg.load_boost_threshold,95)}% boosts only when FPS is below target`:'Disabled'} checked={!!cfg.load_boost_enabled} onChange={async(v:boolean)=>{const ok=await save('load_boost_enabled',v);if(ok) await refresh();}}/></PanelSectionRow>
+        <PanelSectionRow><SliderField label="High-load threshold" value={safeNum(cfg.load_boost_threshold,95)} min={90} max={100} step={1} showValue valueSuffix="%" onChange={(v:number)=>save('load_boost_threshold',v)}/></PanelSectionRow>
       </PanelSection>
 
       <PanelSection title="Fan curve">
@@ -139,7 +143,8 @@ function makeContent(serverAPI: ServerAPI) {
         {!f.available && <PanelSectionRow><span style={{color:'#94a3b8'}}>PWM fan controller not detected.</span></PanelSectionRow>}
       </PanelSection>
 
-      <PanelSection title="FPS source">
+      <PanelSection title="FPS source / requirements">
+        <PanelSectionRow><span style={{color:'#dbeafe'}}>Keep system MangoHud enabled. For correct AutoTDP behavior, disable FPS limits both in the game and in the system/gamescope. The plugin needs uncapped FPS to see the real performance headroom.</span></PanelSectionRow>
         <PanelSectionRow><Row label="Source" value={m.fps_source || 'MangoHud / mangoapp CSV'}/></PanelSectionRow>
         <PanelSectionRow>
           <ToggleField label="MangoHud display" description={cfg.mangohud_display?'HUD visible':'HUD hidden (logging remains active)'} checked={!!cfg.mangohud_display} onChange={async(v:boolean)=>{const ok=await rpc('set_mangohud_display',{enabled:v});if(ok) await refresh();}}/>

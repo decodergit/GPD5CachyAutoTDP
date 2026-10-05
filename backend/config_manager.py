@@ -22,13 +22,15 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "1.0.0",
+        "version": "1.2.0",
         "enabled": False,
         "target_fps": 40,
         "min_tdp": 15,
         "max_tdp": 55,
         "initial_tdp": 35,
         "last_tdp": None,
+        "load_boost_enabled": True,
+        "load_boost_threshold": 95,
         "mangohud_display": False,
         "enable_auto_adjust": True,
         "check_interval_sec": 3,
