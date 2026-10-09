@@ -1,6 +1,6 @@
 {
   "name": "gpd5cachyautotdp",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "Automatic TDP control by target FPS and GPD WIN 5 fan curve for CachyOS",
   "author": "GPD5CachyAutoTDP Contributors",
   "license": "MIT",

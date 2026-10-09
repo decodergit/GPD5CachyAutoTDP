@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import subprocess
+import threading
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -30,8 +31,12 @@ class TDPController:
         self.path: Optional[Path] = None
         self.ryzenadj: Optional[str] = None
         self.min_w = 5.0
-        self.max_w = 55.0
+        self.max_w = 80.0
         self.current_w: Optional[float] = None
+        # All SMU/backend operations are serialized. On Strix Halo the
+        # ryzenadj fallback uses low-level access, so overlapping reads/writes
+        # from the UI and AutoTDP loop are deliberately forbidden.
+        self._io_lock = threading.RLock()
         self._detect()
 
     def _detect(self):
@@ -78,9 +83,9 @@ class TDPController:
             # DPTC v3+ exposes W, older RFC builds expose mW.
             if mx > 1000:
                 mn /= 1000.0; mx /= 1000.0
-            self.min_w, self.max_w = mn, min(mx, 55.0)
+            self.min_w, self.max_w = mn, min(mx, 80.0)
         except Exception:
-            self.min_w, self.max_w = 5.0, 55.0
+            self.min_w, self.max_w = 5.0, 80.0
 
     def available(self) -> bool:
         return self.backend != 'none'
@@ -100,34 +105,29 @@ class TDPController:
         return None
 
     def read_tdp(self) -> Optional[float]:
-        if self.backend == 'dptc':
-            v = self._read_value(['ppt_pl1_spl', 'stapm_limit'])
-            if v is not None:
-                self.current_w = v
-                return v
+        # DPTC exposes a safe kernel-level readback. The ryzenadj backend on
+        # Strix Halo does not: ryzenadj -i falls back to /dev/mem and the
+        # power-metric table is unavailable on this system. Never probe SMU
+        # from the game/UI telemetry path; return the last successful setpoint.
+        with self._io_lock:
+            if self.backend == 'dptc':
+                v = self._read_value(['ppt_pl1_spl', 'stapm_limit'])
+                if v is not None:
+                    self.current_w = v
+                    return v
             return self.current_w
-        if self.backend == 'ryzenadj' and self.ryzenadj:
-            try:
-                r = subprocess.run([self.ryzenadj, '-i'], capture_output=True, text=True,
-                                   timeout=2, check=False)
-                import re
-                m = re.search(r'STAPM LIMIT\s*[:=]\s*([0-9.]+)', r.stdout, re.I)
-                if m:
-                    self.current_w = float(m.group(1)); return self.current_w
-            except Exception as e:
-                logger.debug('ryzenadj info failed: %s', e)
-        return self.current_w
 
     def has_hardware_readback(self) -> bool:
         return self.backend == 'dptc'
 
     def set_tdp(self, watts: float) -> bool:
-        if not self.available():
-            raise TDPControllerException('No TDP backend available')
-        watts = max(self.min_w, min(self.max_w, float(watts)))
-        if self.backend == 'dptc':
-            return self._set_dptc(watts)
-        return self._set_ryzenadj(watts)
+        with self._io_lock:
+            if not self.available():
+                raise TDPControllerException('No TDP backend available')
+            watts = max(self.min_w, min(self.max_w, float(watts)))
+            if self.backend == 'dptc':
+                return self._set_dptc(watts)
+            return self._set_ryzenadj(watts)
 
     def _set_dptc(self, watts: float) -> bool:
         assert self.path

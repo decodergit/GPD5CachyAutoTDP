@@ -1,25 +1,41 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 GPD5CachyAutoTDP Contributors
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PanelSection, PanelSectionRow, SliderField, ToggleField, ButtonItem, staticClasses } from '@decky/ui';
 
 type ServerAPI = { callPluginMethod: (method: string, args?: Record<string, unknown>) => Promise<any> };
 
 const DEFAULT_CONFIG = {
-  enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 55, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false,
+  enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false,
   check_interval_sec: 3, hysteresis_threshold: 5,
   fan_control: { enabled: true },
 };
 
+const LOOKS_LIKE_CONFIG = ['enabled','target_fps','min_tdp','max_tdp','initial_tdp','fan_control'];
+const looksLikeConfig = (o: any): boolean => LOOKS_LIKE_CONFIG.filter(k => Object.prototype.hasOwnProperty.call(o,k)).length >= 2;
+
+// Разворачивает legacy-конверт Decky {result, success}. Строку ошибки бэкенда
+// (success:false) не принимаем за данные — возвращаем {__error}.
 const unwrap = (v: any): any => {
-  if (v && typeof v === 'object' && !Array.isArray(v)) {
-    if (Object.prototype.hasOwnProperty.call(v, 'result') &&
-        (Object.prototype.hasOwnProperty.call(v, 'success') || Object.keys(v).length <= 2)) return v.result;
-    if (Object.prototype.hasOwnProperty.call(v, 'data') &&
-        (Object.prototype.hasOwnProperty.call(v, 'success') || Object.keys(v).length <= 2)) return v.data;
+  let value = v;
+  for (let depth = 0; depth < 4; depth++) {
+    if (typeof value === 'string') {
+      try { value = JSON.parse(value); continue; } catch { return value; }
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    if (value.success === false) {
+      return { __error: typeof value.result === 'string' ? value.result : JSON.stringify(value.result) };
+    }
+    if (looksLikeConfig(value)) return value;
+    if (Object.prototype.hasOwnProperty.call(value, 'result')) { value = value.result; continue; }
+    if (Object.prototype.hasOwnProperty.call(value, 'data')) { value = value.data; continue; }
+    return value;
   }
-  return v;
+  return value;
 };
+
+const describe = (v: any): string =>
+  v === undefined ? 'undefined' : v === null ? 'null' : typeof v === 'string' ? v : JSON.stringify(v);
 
 const safeNum = (v: any, fallback: number) => {
   const n = Number(v);
@@ -51,13 +67,18 @@ function makeContent(serverAPI: ServerAPI) {
     const [cfg,setCfg] = useState<any>(null);
     const [stats,setStats] = useState<any>(null);
     const [error,setError] = useState<string>('');
+    const pendingTimers = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
+    const refreshBlockedUntil = useRef(0);
 
     const refresh = async () => {
+      if (Date.now() < refreshBlockedUntil.current) return;
       const c = await rpc('get_config');
+      if (c && c.__error) { setError('Backend RPC get_config вернул неверный ответ: ' + c.__error); return; }
       if (c && typeof c === 'object' && !Array.isArray(c)) {
+        setError(c._backend_error ? 'AutoTDP backend: ' + c._backend_error : '');
         setCfg({...DEFAULT_CONFIG,...c,fan_control:{...DEFAULT_CONFIG.fan_control,...(c.fan_control||{})}});
       } else {
-        setError('Backend RPC get_config вернул неверный ответ');
+        setError('Backend RPC get_config вернул неверный ответ: ' + describe(c));
         return;
       }
       const s = await rpc('get_stats');
@@ -80,22 +101,27 @@ function makeContent(serverAPI: ServerAPI) {
       return ok;
     };
 
-    const updateMonitorParam = async (key:string,value:any) => {
+    const updateMonitorParam = (key:string,value:any) => {
       setCfg((x:any)=>({...x,[key]:value}));
-      const args:any = {};
-      if (key==='min_tdp') args.min_tdp=safeNum(value,15);
-      else if (key==='max_tdp') args.max_tdp=safeNum(value,55);
-      else if (key==='target_fps') args.target_fps=safeNum(value,40);
-      else return save(key,value);
-      const ok=await rpc('update_monitor_params',args);
-      if (!ok) setError('Backend не принял параметры AutoTDP');
-      return ok;
+      const oldTimer = pendingTimers.current[key];
+      if (oldTimer) clearTimeout(oldTimer);
+      refreshBlockedUntil.current = Date.now() + 700;
+      pendingTimers.current[key] = setTimeout(async () => {
+        const args:any = {};
+        if (key==='min_tdp') args.min_tdp=safeNum(value,15);
+        else if (key==='max_tdp') args.max_tdp=safeNum(value,80);
+        else if (key==='target_fps') args.target_fps=safeNum(value,40);
+        else { await save(key,value); return; }
+        const ok=await rpc('update_monitor_params',args);
+        if (!ok) setError('Backend не принял параметры AutoTDP');
+        refreshBlockedUntil.current = Date.now() + 500;
+      },250);
     };
 
     const enabled=!!cfg.enabled;
     const toggle=async (value:boolean) => {
       const ok=value
-        ? await rpc('start_monitor',{min_tdp:safeNum(cfg.min_tdp,15),max_tdp:safeNum(cfg.max_tdp,55),target_fps:safeNum(cfg.target_fps,40),enable_auto:true})
+        ? await rpc('start_monitor',{min_tdp:safeNum(cfg.min_tdp,15),max_tdp:safeNum(cfg.max_tdp,80),target_fps:safeNum(cfg.target_fps,40),enable_auto:true})
         : await rpc('stop_monitor');
       if (!ok) { setError('Не удалось изменить состояние AutoTDP'); return; }
       await save('enabled',value);
@@ -105,14 +131,21 @@ function makeContent(serverAPI: ServerAPI) {
     const t=(stats&&stats.tdp)||{};
     const m=(stats&&stats.monitor)||{};
     const f=(stats&&stats.fan)||{};
+    const c_={available:false,min_cores:2,max_cores:0,active_cores:0,online_threads:0,total_threads:0,...((stats&&stats.cores)||{})};
     const target=safeNum(cfg.target_fps,40);
     const minTdp=safeNum(cfg.min_tdp,15);
-    const maxTdp=safeNum(cfg.max_tdp,55);
+    const maxTdp=Math.min(80,safeNum(cfg.max_tdp,80));
     const initialTdp=safeNum(cfg.initial_tdp,35);
 
     return <>
+      <PanelSection title="Auto TDP">
+        <PanelSectionRow>
+          <ToggleField label="Auto TDP" description={enabled?'Running':'Stopped'} checked={enabled} onChange={toggle}/>
+        </PanelSectionRow>
+      </PanelSection>
       {error && <PanelSection title="Status"><PanelSectionRow><span style={{color:'#ffb3b3'}}>{error}</span></PanelSectionRow></PanelSection>}
       <PanelSection title="Auto TDP / FPS">
+        <Row label="Build" value={(stats&&stats.build) || 'старый backend: переустановите архив'}/>
         <Row label="TDP backend" value={t.backend || 'none'}/>
         <Row label="Current TDP" value={t.current_tdp!=null ? `${safeNum(t.current_tdp,0).toFixed(1)} W` : '—'}/>
         <Row label="TDP source" value={t.tdp_source==='setpoint' ? 'setpoint (ryzenadj readback unavailable)' : (t.tdp_source || '—')}/>
@@ -120,13 +153,11 @@ function makeContent(serverAPI: ServerAPI) {
         <Row label="CPU load" value={m.last_cpu_load!=null ? `${safeNum(m.last_cpu_load,0).toFixed(1)}%` : '—'}/>
         <Row label="GPU load" value={m.last_gpu_load!=null ? `${safeNum(m.last_gpu_load,0).toFixed(1)}%` : '—'}/>
         <Row label="Controller" value={m.state || 'stopped'}/>
-        <PanelSectionRow>
-          <ToggleField label="Auto TDP" description={enabled?'Running':'Stopped'} checked={enabled} onChange={toggle}/>
-        </PanelSectionRow>
         <PanelSectionRow><SliderField label="Target FPS" value={target} min={30} max={120} step={5} showValue onChange={(v:number)=>updateMonitorParam('target_fps',v)}/></PanelSectionRow>
-        <PanelSectionRow><SliderField label="Start TDP" description={enabled?'Used when Auto TDP starts':'Applied when Auto TDP is switched off'} value={initialTdp} min={5} max={55} step={1} showValue valueSuffix=" W" onChange={async(v:number)=>{const ok=await save('initial_tdp',v);if(ok && !enabled) await rpc('set_tdp',{value:v});}}/></PanelSectionRow>
+        <PanelSectionRow><SliderField label="Start TDP" description={enabled?'Used when Auto TDP starts':'Applied when Auto TDP is switched off'} value={initialTdp} min={5} max={80} step={1} showValue valueSuffix=" W" onChange={async(v:number)=>{const ok=await save('initial_tdp',v);if(ok && !enabled) await rpc('set_tdp',{value:v});}}/></PanelSectionRow>
         <PanelSectionRow><SliderField label="Minimum TDP" value={minTdp} min={5} max={maxTdp} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('min_tdp',v)}/></PanelSectionRow>
-        <PanelSectionRow><SliderField label="Maximum TDP" value={maxTdp} min={minTdp} max={55} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('max_tdp',v)}/></PanelSectionRow>
+        <PanelSectionRow><SliderField label="Maximum TDP" value={maxTdp} min={minTdp} max={80} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('max_tdp',v)}/></PanelSectionRow>
+        {c_.available && <PanelSectionRow><SliderField label="Active CPU cores" description={`Physical cores with SMT kept together; ${c_.online_threads}/${c_.total_threads} threads online`} value={c_.active_cores} min={c_.min_cores} max={c_.max_cores} step={1} showValue onChange={(v:number)=>rpc('set_active_cores',{cores:v}).then((res:any)=>{if(!res||res.ok===false)setError('Не удалось изменить число ядер: '+((res&&(res.error||(res.failed&&res.failed.length?'не записаны CPU '+res.failed.join(', '):'')))||'нет ответа backend'));return refresh();})}/></PanelSectionRow>}
         <PanelSectionRow><ToggleField label="High-load TDP boost" description={cfg.load_boost_enabled?`CPU >${safeNum(cfg.load_boost_threshold,95)}% boosts TDP even when FPS is already on target; GPU >${safeNum(cfg.load_boost_threshold,95)}% boosts only when FPS is below target`:'Disabled'} checked={!!cfg.load_boost_enabled} onChange={async(v:boolean)=>{const ok=await save('load_boost_enabled',v);if(ok) await refresh();}}/></PanelSectionRow>
         <PanelSectionRow><SliderField label="High-load threshold" value={safeNum(cfg.load_boost_threshold,95)} min={90} max={100} step={1} showValue valueSuffix="%" onChange={(v:number)=>save('load_boost_threshold',v)}/></PanelSectionRow>
       </PanelSection>

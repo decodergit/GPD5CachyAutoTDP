@@ -1,9 +1,23 @@
-# GPD5CachyAutoTDP 1.2.0
+# GPD5CachyAutoTDP 1.3.0
 
 Decky Loader plugin for **GPD WIN 5 / AMD Ryzen AI MAX+ 395 (Strix Halo) / CachyOS Handheld**.
 
 The plugin automatically adjusts TDP to the selected target FPS, boosts TDP during sustained high CPU/GPU load, and controls the GPD WIN 5 fan curve.
 
+
+
+### 1.3.0 stability / RPC changes
+- Serialized all TDP backend operations with a lock.
+- Removed `ryzenadj -i` from the live telemetry path on the Strix Halo fallback backend; the plugin uses the last successful TDP setpoint instead.
+- Moved blocking backend operations off Decky's asyncio event loop.
+- Made configuration writes thread-safe and atomic.
+- Stopped writing `config.json` on every AutoTDP TDP adjustment.
+- Debounced Target FPS / TDP slider updates to avoid a burst of backend RPC calls while dragging.
+- Made the legacy frontend RPC response unwrapping compatible with raw, `result`, `data`, and JSON-string response forms.
+
+### Startup watchdog (1.2.1)
+
+If AutoTDP remains in `waiting` for more than 10 seconds after plugin startup, the plugin automatically performs a full backend reinitialization. This is intended to recover from the known post-reboot condition where the plugin can remain stuck in `waiting` until manually reloaded from Decky Loader. A 30-second cooldown prevents rapid restart loops.
 
 ## Project status and purpose
 
@@ -107,3 +121,18 @@ In particular, the repository does not distribute the RyzenAdj binary or the
 PowerControl plugin. When an existing RyzenAdj executable from PowerControl
 is detected during first-launch initialization, that executable remains
 subject to its original LGPL-3.0-or-later license.
+
+## Power limits (2.0.0)
+
+- Maximum TDP slider range: 5–80 W (previously 55 W). Start TDP uses the same range.
+- The backend clamps values to the platform-reported maximum (`max_value` from DPTC) and never above 80 W.
+
+## Active CPU cores (2.0.0)
+
+The **Active CPU cores** slider turns physical cores off through Linux CPU hotplug (`/sys/devices/system/cpu/cpuN/online`).
+
+- Cores are switched off as whole pairs (both SMT siblings), so SMT stays enabled on every remaining core.
+- The minimum is 2 physical cores. The maximum is read from `possible` and `thread_siblings_list` at startup. Nothing is hard-coded, so the plugin works with any core layout the firmware exposes.
+- CPU 0 is never switched off.
+- The selected value is stored in `config.json` (`active_cores`) and reapplied at startup. Unloading the plugin brings all CPUs back online.
+- Requires root (the plugin already runs with `flags: ["root"]`).

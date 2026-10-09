@@ -8,6 +8,9 @@ import copy
 import json
 import logging
 import os
+import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -22,13 +25,15 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "1.2.0",
+        "version": "2.0.0",
+        "config_version": "2.0.0",
         "enabled": False,
         "target_fps": 40,
         "min_tdp": 15,
-        "max_tdp": 55,
+        "max_tdp": 80,
         "initial_tdp": 35,
         "last_tdp": None,
+        "active_cores": None,
         "load_boost_enabled": True,
         "load_boost_threshold": 95,
         "mangohud_display": False,
@@ -81,6 +86,7 @@ class ConfigManager:
         self.config_path = self.settings_dir / self.CONFIG_FILENAME
         self.settings_dir.mkdir(parents=True, exist_ok=True)
         self._config: Optional[Dict[str, Any]] = None
+        self._lock = threading.RLock()
         logger.info("ConfigManager: %s", self.settings_dir)
 
     @classmethod
@@ -89,11 +95,29 @@ class ConfigManager:
 
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _version_tuple(text) -> tuple:
+        try:
+            return tuple(int(x) for x in str(text).split(".")[:3])
+        except ValueError:
+            return (0, 0, 0)
+
+    def _quarantine_corrupt(self, reason: str) -> None:
+        try:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            backup = self.config_path.with_name(f"{self.config_path.name}.corrupt-{stamp}")
+            os.replace(self.config_path, backup)
+            logger.warning("Corrupt config (%s) moved to %s", reason, backup)
+        except OSError as e:
+            logger.error("Could not quarantine corrupt config: %s", e)
+
     def load_config(self) -> Dict[str, Any]:
         if self.config_path.exists():
             try:
                 with open(self.config_path, "r") as f:
                     loaded = json.load(f)
+                if not isinstance(loaded, dict):
+                    raise ValueError("config root is not an object")
                 # Merge with defaults so new keys are always present
                 merged = self.get_default_config()
                 merged.update(loaded)
@@ -102,13 +126,29 @@ class ConfigManager:
                 # Migrate the old EPP-only configuration. Never interpret EPP as a TDP value.
                 if "min_tdp" not in loaded:
                     merged["min_tdp"] = 15
-                    merged["max_tdp"] = 55
+                if "max_tdp" not in loaded:
+                    merged["max_tdp"] = 80
+                # Файлы, записанные версиями 1.x, содержат старый максимум 55 W.
+                # Поднимаем его до 80 W, если пользователь не выставлял значение после 2.0.0.
+                migrated = False
+                # Признак "записано до миграции" — отсутствие config_version (его ввела эта миграция).
+                # Поле version здесь не годится: первая сборка 2.0.0 уже писала version=2.0.0.
+                if "config_version" not in loaded and float(merged.get("max_tdp", 80)) == 55.0:
+                    merged["max_tdp"] = 80
+                    merged["config_version"] = "2.0.0"
+                    migrated = True
                 if "initial_tdp" not in loaded:
                     merged["initial_tdp"] = min(35, merged["max_tdp"])
                 self._config = merged
                 logger.info("Loaded config from %s", self.config_path)
-            except json.JSONDecodeError as e:
-                raise ConfigException(f"Invalid JSON in config: {e}")
+                if migrated:
+                    self.save_config()
+                    logger.info("Migrated max_tdp 55 -> 80 W from a 1.x config")
+            except (json.JSONDecodeError, ValueError) as e:
+                # Битый файл не должен блокировать запуск: сохраняем копию и берём умолчания.
+                self._quarantine_corrupt(f"invalid config: {e}")
+                self._config = self.get_default_config()
+                self.save_config()
             except OSError as e:
                 raise ConfigException(f"Cannot read config: {e}")
         else:
@@ -118,53 +158,68 @@ class ConfigManager:
         return self._config
 
     def save_config(self, config: Optional[Dict[str, Any]] = None) -> bool:
-        if config is not None:
-            self._config = config
-        if self._config is None:
-            raise ConfigException("No config loaded")
-        try:
-            with open(self.config_path, "w") as f:
-                json.dump(self._config, f, indent=2)
-            return True
-        except OSError as e:
-            raise ConfigException(f"Cannot write config: {e}")
+        with self._lock:
+            if config is not None:
+                self._config = config
+            if self._config is None:
+                raise ConfigException("No config loaded")
+            try:
+                self.settings_dir.mkdir(parents=True, exist_ok=True)
+                fd, tmp_name = tempfile.mkstemp(prefix='.config.', suffix='.tmp', dir=str(self.settings_dir))
+                try:
+                    with os.fdopen(fd, 'w') as f:
+                        json.dump(self._config, f, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp_name, self.config_path)
+                finally:
+                    if os.path.exists(tmp_name):
+                        try: os.unlink(tmp_name)
+                        except OSError: pass
+                return True
+            except OSError as e:
+                raise ConfigException(f"Cannot write config: {e}")
 
     def get_config(self) -> Dict[str, Any]:
-        if self._config is None:
-            return self.load_config()
-        return self._config
+        with self._lock:
+            if self._config is None:
+                self.load_config()
+            return copy.deepcopy(self._config)
 
     def set_config(self, config: Dict[str, Any]) -> bool:
-        self._config = config
-        return self.save_config()
+        with self._lock:
+            self._config = copy.deepcopy(config)
+            return self.save_config()
 
     def get_value(self, key: str, default: Any = None) -> Any:
-        if self._config is None:
-            self.load_config()
-        keys = key.split(".")
-        node: Any = self._config
-        for k in keys:
-            if isinstance(node, dict) and k in node:
-                node = node[k]
-            else:
-                return default
-        return node
+        with self._lock:
+            if self._config is None:
+                self.load_config()
+            keys = key.split('.')
+            node: Any = self._config
+            for k in keys:
+                if isinstance(node, dict) and k in node:
+                    node = node[k]
+                else:
+                    return default
+            return copy.deepcopy(node)
 
     def set_value(self, key: str, value: Any) -> bool:
-        if self._config is None:
-            self.load_config()
-        keys = key.split(".")
-        if not keys:
-            raise ConfigException("Empty key")
-        node = self._config
-        for k in keys[:-1]:
-            if k not in node:
-                node[k] = {}
-            if not isinstance(node[k], dict):
-                raise ConfigException(f"Non-dict node at '{k}'")
-            node = node[k]
-        node[keys[-1]] = value
-        return self.save_config()
+        with self._lock:
+            if self._config is None:
+                self.load_config()
+            keys = key.split('.')
+            if not keys:
+                raise ConfigException("Empty key")
+            node = self._config
+            for k in keys[:-1]:
+                if k not in node:
+                    node[k] = {}
+                if not isinstance(node[k], dict):
+                    raise ConfigException(f"Non-dict node at '{k}'")
+                node = node[k]
+            node[keys[-1]] = value
+            return self.save_config()
 
     # ------------------------------------------------------------------
 
@@ -202,7 +257,7 @@ class ConfigManager:
     def validate_config(self, config: Dict[str, Any]) -> Tuple[bool, str]:
         if not isinstance(config.get("enabled", False), bool): return False, "enabled must be bool"
         if not (1 <= int(config.get("target_fps",40)) <= 120): return False, "target_fps must be 1-120"
-        if float(config.get("min_tdp",15)) > float(config.get("max_tdp",55)): return False, "min_tdp must be <= max_tdp"
+        if float(config.get("min_tdp",15)) > float(config.get("max_tdp",80)): return False, "min_tdp must be <= max_tdp"
         return True, ""
 
     def reset_to_defaults(self) -> bool:

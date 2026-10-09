@@ -12,10 +12,10 @@ class TDPMonitor:
     STATE_STOPPED='stopped'; STATE_RUNNING='running'; STATE_WAITING='waiting'; STATE_ERROR='error'
     def __init__(self, tdp: TDPController, config_manager: Any, fan=None):
         self.tdp=tdp; self.cfg=config_manager; self.fan=fan; self.fps=FPSReader(); self._lock=threading.Lock(); self._stop=threading.Event(); self._thread=None
-        self._running=False; self.state=self.STATE_STOPPED; self.target_fps=40; self.min_tdp=15.; self.max_tdp=55.; self.last_fps=None; self.last_cpu_load=None; self.last_gpu_load=None; self.last_tdp=None
+        self._running=False; self.state=self.STATE_STOPPED; self._waiting_since=None; self.target_fps=40; self.min_tdp=15.; self.max_tdp=80.; self.last_fps=None; self.last_cpu_load=None; self.last_gpu_load=None; self.last_tdp=None
         self._stats={'adjustments_made':0,'errors':0,'last_error':None,'total_runtime_sec':0,'load_boosts_made':0}
 
-    def start(self,min_tdp=15.,max_tdp=55.,target_fps=40,initial_tdp=None):
+    def start(self,min_tdp=15.,max_tdp=80.,target_fps=40,initial_tdp=None):
         if not self.tdp.available(): raise TDPMonitorException('No real TDP backend available')
         if min_tdp>max_tdp or target_fps<1: raise TDPMonitorException('Invalid monitor parameters')
         with self._lock:
@@ -46,7 +46,9 @@ class TDPMonitor:
                 self.cfg.set_value('last_tdp',initial)
             except Exception as e:
                 reset_error=str(e); logger.error('Failed to restore initial TDP: %s',e,exc_info=True)
-        with self._lock:self.state=self.STATE_STOPPED
+        with self._lock:
+            self.state=self.STATE_STOPPED
+            self._waiting_since=None
         if reset_error: raise TDPMonitorException(reset_error)
         return True
 
@@ -61,7 +63,7 @@ class TDPMonitor:
     def _set(self, cur, delta, load_boost=False):
         new=max(self.min_tdp,min(self.max_tdp,cur+delta))
         if abs(new-cur)<0.5:return False
-        self.tdp.set_tdp(new); self.last_tdp=new; self.cfg.set_value('last_tdp',new); self._stats['adjustments_made']+=1
+        self.tdp.set_tdp(new); self.last_tdp=new; self._stats['adjustments_made']+=1
         if load_boost:self._stats['load_boosts_made']+=1
         return True
 
@@ -74,8 +76,11 @@ class TDPMonitor:
                 cur_read=self.tdp.read_tdp()
                 if cur_read is not None:self.last_tdp=cur_read
                 if fps is None or self.last_tdp is None:
+                    if self.state != self.STATE_WAITING or self._waiting_since is None:
+                        self._waiting_since=time.monotonic()
                     self.state=self.STATE_WAITING
                 else:
+                    self._waiting_since=None
                     cur=float(self.last_tdp); threshold=float(self.cfg.get_value('load_boost_threshold',95)); boost_enabled=bool(self.cfg.get_value('load_boost_enabled',True))
                     high_cpu=cpu is not None and cpu>threshold
                     high_gpu=gpu is not None and gpu>threshold
@@ -113,4 +118,4 @@ class TDPMonitor:
 
     def get_stats(self):
         with self._lock:
-            return {'state':self.state,'running':self._running,'target_fps':self.target_fps,'min_tdp':self.min_tdp,'max_tdp':self.max_tdp,'last_fps':self.last_fps,'last_cpu_load':self.last_cpu_load,'last_gpu_load':self.last_gpu_load,'load_boost_enabled':bool(self.cfg.get_value('load_boost_enabled',True)),'load_boost_threshold':float(self.cfg.get_value('load_boost_threshold',95)),'last_tdp':self.last_tdp,**self._stats,'fps_source':self.fps.path and str(self.fps.path)}
+            return {'state':self.state,'running':self._running,'target_fps':self.target_fps,'min_tdp':self.min_tdp,'max_tdp':self.max_tdp,'last_fps':self.last_fps,'last_cpu_load':self.last_cpu_load,'last_gpu_load':self.last_gpu_load,'load_boost_enabled':bool(self.cfg.get_value('load_boost_enabled',True)),'load_boost_threshold':float(self.cfg.get_value('load_boost_threshold',95)),'last_tdp':self.last_tdp,**self._stats,'fps_source':self.fps.path and str(self.fps.path),'waiting_seconds':(max(0.0,time.monotonic()-self._waiting_since) if self.state==self.STATE_WAITING and self._waiting_since is not None else 0.0)}
