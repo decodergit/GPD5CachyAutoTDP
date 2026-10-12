@@ -25,7 +25,7 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "2.0.0",
+        "version": "2.1.1",
         "config_version": "2.0.0",
         "enabled": False,
         "target_fps": 40,

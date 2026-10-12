@@ -66,6 +66,7 @@ function makeContent(serverAPI: ServerAPI) {
   return function Content() {
     const [cfg,setCfg] = useState<any>(null);
     const [stats,setStats] = useState<any>(null);
+    const [coresDraft,setCoresDraft]=useState<number|null>(null);
     const [error,setError] = useState<string>('');
     const pendingTimers = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
     const refreshBlockedUntil = useRef(0);
@@ -131,6 +132,13 @@ function makeContent(serverAPI: ServerAPI) {
     const t=(stats&&stats.tdp)||{};
     const m=(stats&&stats.monitor)||{};
     const f=(stats&&stats.fan)||{};
+    const coresStatusText=(op:any,draft:number|null)=>{
+      if(!op) return '';
+      if(op.state==='running') return `Изменение ядер: ${op.stage||'выполняется'}${op.detail?` — ${op.detail}`:''}…`;
+      if(op.state==='done') return `Готово: активно ${op.result&&op.result.applied} физ. ядер`;
+      if(op.state==='error') return `Не выполнено: ${(op.result&&op.result.error)||'неизвестная ошибка'}`;
+      return draft!=null ? `Запрошено ${draft} ядер` : '';
+    };
     const c_={available:false,min_cores:2,max_cores:0,active_cores:0,online_threads:0,total_threads:0,...((stats&&stats.cores)||{})};
     const target=safeNum(cfg.target_fps,40);
     const minTdp=safeNum(cfg.min_tdp,15);
@@ -150,6 +158,9 @@ function makeContent(serverAPI: ServerAPI) {
         <Row label="Current TDP" value={t.current_tdp!=null ? `${safeNum(t.current_tdp,0).toFixed(1)} W` : '—'}/>
         <Row label="TDP source" value={t.tdp_source==='setpoint' ? 'setpoint (ryzenadj readback unavailable)' : (t.tdp_source || '—')}/>
         <Row label="Average FPS" value={m.last_fps!=null ? safeNum(m.last_fps,0).toFixed(1) : '—'}/>
+        <Row label="Effective FPS goal" value={m.effective_target_fps!=null ? String(m.effective_target_fps) : '—'}/>
+        <Row label="TDP decision" value={m.tdp_hold_level!=null ? `capped at ${m.tdp_hold_level} W` : (m.tdp_decision || '—')}/>
+        <Row label="Core evacuation" value={c_.evacuation ? (c_.evacuation.ok ? `ok, ${c_.evacuation.moved_threads||0} threads moved` : `blocked: ${c_.evacuation_stuck||0} threads stuck`) : '—'}/>
         <Row label="CPU load" value={m.last_cpu_load!=null ? `${safeNum(m.last_cpu_load,0).toFixed(1)}%` : '—'}/>
         <Row label="GPU load" value={m.last_gpu_load!=null ? `${safeNum(m.last_gpu_load,0).toFixed(1)}%` : '—'}/>
         <Row label="Controller" value={m.state || 'stopped'}/>
@@ -157,7 +168,7 @@ function makeContent(serverAPI: ServerAPI) {
         <PanelSectionRow><SliderField label="Start TDP" description={enabled?'Used when Auto TDP starts':'Applied when Auto TDP is switched off'} value={initialTdp} min={5} max={80} step={1} showValue valueSuffix=" W" onChange={async(v:number)=>{const ok=await save('initial_tdp',v);if(ok && !enabled) await rpc('set_tdp',{value:v});}}/></PanelSectionRow>
         <PanelSectionRow><SliderField label="Minimum TDP" value={minTdp} min={5} max={maxTdp} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('min_tdp',v)}/></PanelSectionRow>
         <PanelSectionRow><SliderField label="Maximum TDP" value={maxTdp} min={minTdp} max={80} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('max_tdp',v)}/></PanelSectionRow>
-        {c_.available && <PanelSectionRow><SliderField label="Active CPU cores" description={`Physical cores with SMT kept together; ${c_.online_threads}/${c_.total_threads} threads online`} value={c_.active_cores} min={c_.min_cores} max={c_.max_cores} step={1} showValue onChange={(v:number)=>rpc('set_active_cores',{cores:v}).then((res:any)=>{if(!res||res.ok===false)setError('Не удалось изменить число ядер: '+((res&&(res.error||(res.failed&&res.failed.length?'не записаны CPU '+res.failed.join(', '):'')))||'нет ответа backend'));return refresh();})}/></PanelSectionRow>}
+        {c_.available && <><PanelSectionRow><SliderField label="Active CPU cores" description={`Physical cores with SMT kept together; ${c_.online_threads}/${c_.total_threads} threads online`} value={coresDraft!=null ? coresDraft : c_.active_cores} min={c_.min_cores} max={c_.max_cores} step={1} showValue onChange={(v:number)=>{setCoresDraft(v); rpc('set_active_cores',{cores:v}).then((res:any)=>{if(!res||res.started===false)setError('Не удалось начать изменение ядер: '+((res&&res.error)||'нет ответа backend')); else setCoresDraft(v);});}}/></PanelSectionRow><PanelSectionRow><span style={{color:'#dbeafe'}}>{coresStatusText(c_.operation, coresDraft)}</span></PanelSectionRow></>}
         <PanelSectionRow><ToggleField label="High-load TDP boost" description={cfg.load_boost_enabled?`CPU >${safeNum(cfg.load_boost_threshold,95)}% boosts TDP even when FPS is already on target; GPU >${safeNum(cfg.load_boost_threshold,95)}% boosts only when FPS is below target`:'Disabled'} checked={!!cfg.load_boost_enabled} onChange={async(v:boolean)=>{const ok=await save('load_boost_enabled',v);if(ok) await refresh();}}/></PanelSectionRow>
         <PanelSectionRow><SliderField label="High-load threshold" value={safeNum(cfg.load_boost_threshold,95)} min={90} max={100} step={1} showValue valueSuffix="%" onChange={(v:number)=>save('load_boost_threshold',v)}/></PanelSectionRow>
       </PanelSection>

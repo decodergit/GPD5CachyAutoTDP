@@ -136,3 +136,27 @@ The **Active CPU cores** slider turns physical cores off through Linux CPU hotpl
 - CPU 0 is never switched off.
 - The selected value is stored in `config.json` (`active_cores`) and reapplied at startup. Unloading the plugin brings all CPUs back online.
 - Requires root (the plugin already runs with `flags: ["root"]`).
+
+## FPS target and TDP model (2.1.0)
+
+- The controller aims at Target FPS + 2 (Effective FPS goal).
+- TDP is raised for FPS only if the previous increase gave at least +1 fps. Otherwise the TDP is capped at that level for 30 s.
+- TDP decreases are not limited by the model.
+- The CPU load boost is independent of this rule (it is for shader compilation).
+
+## Core evacuation (2.1.0)
+
+Before disabling physical cores, the plugin moves IRQs and user threads to the cores that stay online. A core is disabled only if no user thread is left on it. Kernel threads are handled by the kernel. If a thread is pinned only to cores being disabled, the switch-off is refused and the UI shows the reason.
+
+## Changing the number of CPU cores (2.1.1)
+
+The slider does not wait for the change to finish. Status under the slider shows the current stage. If a core cannot be switched off (for example, a thread is pinned only to it), the change stops and the reason is shown. The core count is saved only after success.
+
+## FPS hold (2.1.1)
+
+- The controller aims at Target FPS + 2.
+- Shortfall: TDP is raised in 1-3 W steps.
+- Surplus: TDP is lowered by 1 W only after the surplus has lasted 10 s. Frames slightly above the goal do not lower TDP.
+- Plateau: if raising TDP does not give at least +1 fps within 6 s, the TDP is capped at that level for 60 s.
+- Load boost by CPU is independent of this logic.
+

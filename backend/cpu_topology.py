@@ -1,17 +1,15 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 GPD5CachyAutoTDP Contributors
 """
-Управление активными физическими ядрами через sysfs CPU hotplug.
+Управление активными физическими ядрами через sysfs CPU hotplug (версия 2.1.1).
 
 Принципы:
-  * Отключаются только ЦЕЛЫЕ физические ядра (оба SMT-потока), поэтому
-    гипертрединг сохраняется для всех оставшихся ядер.
-  * Число ядер и пары потоков НЕ хардкодятся: читаются из
-    /sys/devices/system/cpu/possible и topology/thread_siblings_list.
+  * Отключаются только ЦЕЛЫЕ физические ядра (оба SMT-потока).
+  * Число ядер и пары потоков читаются из /sys (possible, thread_siblings_list).
   * CPU 0 никогда не отключается.
   * Минимум оставшихся физических ядер — MIN_CORES (2).
-  * Перед чтением топологии все CPU возвращаются онлайн, иначе после
-    предыдущего сбоя плагина часть siblings могла бы не читаться.
+  * Перед отключением CPU вытесняются пользовательские потоки и IRQ (core_evacuation).
+  * Операция выполняется фоново; текущая стадия доступна через get_status().
 """
 
 import logging
@@ -46,18 +44,25 @@ class CpuTopology:
         self.root = Path(root)
         self._lock = threading.RLock()
         self.possible: List[int] = []
-        self.cores: List[Tuple[int, ...]] = []   # физические ядра, отсортированы по первому CPU
+        self.cores: List[Tuple[int, ...]] = []
         self.active_cores: Optional[int] = None
         self.last_error: Optional[str] = None
+        self.proc_root = Path("/proc")
+        self.irq_root = Path("/proc/irq")
+        self.last_evacuation: Optional[Dict[str, Any]] = None
+        # Состояние фоновой операции (для UI)
+        self.op_state = "idle"          # idle | running | done | error
+        self.op_stage = ""              # текст текущей стадии
+        self.op_detail = ""
+        self.op_result: Optional[Dict[str, Any]] = None
+        self._op_thread: Optional[threading.Thread] = None
+        self.on_applied = None  # callback(applied:int), задаётся из main.py
         self.available = False
         with self._lock:
             self._read_possible()
-            # Все CPU онлайн перед чтением топологии: иначе siblings могут быть неполными.
             self.restore_all()
             self._read_topology()
 
-    # ------------------------------------------------------------------
-    # Чтение состояния системы
     # ------------------------------------------------------------------
     def _cpu_path(self, cpu: int) -> Path:
         return self.root / f"cpu{cpu}"
@@ -77,7 +82,7 @@ class CpuTopology:
             try:
                 siblings = tuple(parse_cpu_list(sib_file.read_text()))
             except (OSError, ValueError):
-                siblings = (cpu,)  # нет данных о SMT — считаем ядро одиночным
+                siblings = (cpu,)
             if cpu not in siblings:
                 siblings = tuple(sorted(set(siblings) | {cpu}))
             groups[siblings] = None
@@ -88,18 +93,15 @@ class CpuTopology:
 
     def _read_online(self, cpu: int) -> bool:
         if cpu == 0 and not (self._cpu_path(0) / "online").exists():
-            return True  # на части систем CPU 0 не имеет файла online и всегда активен
+            return True
         try:
             return (self._cpu_path(cpu) / "online").read_text().strip() == "1"
         except OSError:
             return False
 
-    # ------------------------------------------------------------------
-    # Запись состояния
-    # ------------------------------------------------------------------
     def _set_online(self, cpu: int, value: bool) -> bool:
         if cpu == 0:
-            return True  # CPU 0 не трогаем
+            return True
         path = self._cpu_path(cpu) / "online"
         if not path.exists():
             return False
@@ -113,53 +115,120 @@ class CpuTopology:
             return False
 
     def restore_all(self) -> Dict[str, Any]:
-        """Все возможные CPU онлайн. Используется при старте и выгрузке."""
         with self._lock:
             failed: List[int] = []
             for cpu in self.possible:
                 if cpu == 0:
                     continue
-                if not self._read_online(cpu):
-                    if not self._set_online(cpu, True):
-                        failed.append(cpu)
+                if not self._read_online(cpu) and not self._set_online(cpu, True):
+                    failed.append(cpu)
             self.active_cores = None
             return {"ok": not failed, "failed": failed}
 
-    def apply(self, cores: int) -> Dict[str, Any]:
-        """Оставить `cores` физических ядер (целыми парами SMT)."""
+    # ------------------------------------------------------------------
+    # Фоновая операция
+    # ------------------------------------------------------------------
+    def _progress(self, stage: str, done: int, total: int, detail: str) -> None:
+        self.op_stage = stage
+        self.op_detail = f"{detail} ({done}/{total})" if total else detail
+
+    def start_apply(self, cores: int) -> Dict[str, Any]:
+        """Запускает apply в фоне. Возвращает сразу: {'started': True} или отказ."""
+        with self._lock:
+            if self.op_state == "running":
+                return {"started": False, "error": "предыдущее изменение ещё выполняется"}
+            self.op_state = "running"
+            self.op_stage = "подготовка"
+            self.op_detail = ""
+            self.op_result = None
+            self._op_thread = threading.Thread(target=self._run_apply, args=(int(cores),),
+                                               daemon=True, name="CpuApply")
+            self._op_thread.start()
+            return {"started": True}
+
+    def _run_apply(self, cores: int) -> None:
+        try:
+            res = self.apply(cores, progress=self._progress)
+        except Exception as e:  # защита: фоновый поток не должен падать молча
+            logger.exception("CpuTopology: apply failed")
+            res = {"ok": False, "error": f"внутренняя ошибка: {e}"}
+        with self._lock:
+            self.op_result = res
+            self.op_state = "done" if res.get("ok") else "error"
+            self.op_stage = "готово" if res.get("ok") else "ошибка"
+        # Конфиг пишем только при фактическом успехе, иначе после перезагрузки
+        # восстановится число ядер, которое не было применено.
+        if res.get("ok") and res.get("applied") is not None and self.on_applied:
+            try:
+                self.on_applied(int(res["applied"]))
+            except Exception:
+                logger.exception("CpuTopology: cannot save active_cores")
+
+    def get_status(self) -> Dict[str, Any]:
+        with self._lock:
+            return {"state": self.op_state, "stage": self.op_stage, "detail": self.op_detail,
+                    "result": self.op_result}
+
+    # ------------------------------------------------------------------
+    def apply(self, cores: int, progress=None) -> Dict[str, Any]:
+        """Оставить `cores` физических ядер. Синхронная реализация (вызывается из фона)."""
+        from . import core_evacuation
+
+        def report(stage, done=0, total=0, detail=""):
+            if progress:
+                progress(stage, done, total, detail)
+
         with self._lock:
             total = len(self.cores)
             if total == 0:
-                return {"ok": False, "error": "topology not available"}
+                return {"ok": False, "error": "топология недоступна"}
             wanted = max(min(int(cores), total), min(self.MIN_CORES, total))
             keep = self.cores[:wanted]
             drop = self.cores[wanted:]
             keep_cpus = {c for core in keep for c in core}
+            drop_cpus = {c for core in drop for c in core if c != 0}
             failed: List[int] = []
-            # сначала включаем оставляемые, потом отключаем лишние
+
+            report("включение оставляемых ядер", 0, 0, "")
             for cpu in sorted(keep_cpus):
                 if cpu != 0 and not self._read_online(cpu):
                     if not self._set_online(cpu, True):
                         failed.append(cpu)
-            for core in drop:
+
+            if drop_cpus and any(self._read_online(c) for c in drop_cpus):
+                report("вытеснение задач и IRQ")
+                ev = core_evacuation.evacuate(drop_cpus, keep_cpus, proc=self.proc_root,
+                                              irq_dir=self.irq_root, progress=report)
+                self.last_evacuation = ev
+                if not ev.get("ok"):
+                    stuck = ev.get("stuck", [])
+                    reason = ev.get("error") or f"{len(stuck)} потоков привязаны к отключаемым ядрам"
+                    self.last_error = f"ядра не отключены: {reason}"
+                    logger.warning("CpuTopology: %s", self.last_error)
+                    return {"ok": False, "requested": cores, "applied": self.active_cores,
+                            "max": total, "failed": [], "error": self.last_error,
+                            "stuck": stuck[:20], "evacuation": ev}
+
+            report("отключение ядер", 0, len(drop), "")
+            for i, core in enumerate(drop, 1):
                 for cpu in core:
                     if cpu != 0 and self._read_online(cpu):
                         if not self._set_online(cpu, False):
                             failed.append(cpu)
+                report("отключение ядер", i, len(drop), f"ядро {core}")
+
             self.active_cores = wanted
             logger.info("CpuTopology: active physical cores=%d (of %d), failed=%s",
                         wanted, total, failed)
+            ev = self.last_evacuation or {}
             return {"ok": not failed, "requested": cores, "applied": wanted,
-                    "max": total, "failed": failed}
+                    "max": total, "failed": failed, "evacuation": ev}
 
-    # ------------------------------------------------------------------
-    # Данные для UI
     # ------------------------------------------------------------------
     def get_stats(self) -> Dict[str, Any]:
         with self._lock:
             online_threads = sum(1 for c in self.possible if self._read_online(c))
-            online_cores = sum(1 for core in self.cores
-                               if any(self._read_online(c) for c in core))
+            online_cores = sum(1 for core in self.cores if any(self._read_online(c) for c in core))
             return {
                 "available": self.available,
                 "max_cores": len(self.cores),
@@ -170,4 +239,5 @@ class CpuTopology:
                 "online_threads": online_threads,
                 "smt": any(len(core) > 1 for core in self.cores),
                 "error": self.last_error,
+                "operation": self.get_status(),
             }

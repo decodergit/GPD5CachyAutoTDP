@@ -1,3 +1,29 @@
+## 2.1.1
+
+- Active CPU cores: the slider now stays where you set it while the change runs. The change runs in the background; the RPC returns at once. Under the slider the status is shown: stage, current item, result or error.
+- Stage text: "включение оставляемых ядер", "вытеснение задач и IRQ", "отключение ядер", with progress counters.
+- Evacuation: IRQ write errors no longer block core switch-off. Some IRQs are managed by the kernel and it moves them itself. Threads that already exited (ESRCH) are not counted as stuck.
+- Evacuation still refuses switch-off if a user thread is pinned only to the cores being disabled. The reason is shown in the status.
+- The saved core count is written only after a successful change.
+- FPS hold controller (backend/fps_hold_controller.py) replaces the step logic in the monitor:
+  - shortfall (below the goal): TDP is raised in 1-3 W steps, at most once per 2 s;
+  - surplus: TDP is lowered by 1 W only after the surplus has lasted 10 s, at most once per 8 s; a single frame above the goal does not lower TDP;
+  - plateau: after a raise, if smoothed FPS did not grow by 1 fps within 6 s, the current TDP becomes a ceiling for 60 s. TDP is not raised above the ceiling while FPS is short;
+  - when the data is missing, TDP is not changed.
+- Fix: the Active CPU cores hook was placed after early returns in the UI; it now runs first.
+- Build row shows 2.1.1.
+
+## 2.1.0
+
+- Effective FPS goal: the controller aims at the user's target FPS + 2. The Target FPS slider keeps the user's value; the goal is shown as "Effective FPS goal".
+- FPS/TDP model (backend/fps_tdp_model.py): after each FPS-driven TDP increase, the model measures the average FPS over the window. If the FPS gain is below 1 fps, TDP is capped at that level for 30 s. The cap is re-evaluated after it expires. TDP decreases are never blocked.
+- The CPU load boost is not gated by the model: it exists for shader compilation, where FPS does not rise.
+- Core evacuation (backend/core_evacuation.py): before a physical core is switched off, IRQs are moved to the remaining cores and user threads are moved off the disabled CPUs with sched_setaffinity. Kernel threads (ksoftirqd, kworker) are not moved; the kernel handles them.
+- A core is switched off only if evacuation completes without stuck threads. Otherwise the request fails and the UI shows the number of stuck threads. Increasing the core count does not run evacuation.
+- The active core count is saved to config only when it was actually applied.
+- Status shows "Effective FPS goal", "TDP decision" and "Core evacuation".
+- Build row shows 2.1.0.
+
 ## 2.0.0
 
 - Minimum active physical cores lowered from 4 to 2. The UI, backend and documentation use the same value.

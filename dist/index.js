@@ -41,6 +41,7 @@ function looksLikeConfig(o){var keys=['enabled','target_fps','min_tdp','max_tdp'
     function Content(){
       var s1=useState(null),cfg=s1[0],setCfg=s1[1];
       var s2=useState(null),stats=s2[0],setStats=s2[1];
+      var coresDraftState=useState(null), coresDraft=coresDraftState[0], setCoresDraft=coresDraftState[1];
       var s3=useState(''),error=s3[0],setError=s3[1];
       var pendingTimers=useRef({});
       var refreshBlockedUntil=useRef(0);
@@ -65,6 +66,13 @@ function looksLikeConfig(o){var keys=['enabled','target_fps','min_tdp','max_tdp'
       }
       var t=(stats&&stats.tdp)||{},m=(stats&&stats.monitor)||{},f=(stats&&stats.fan)||{};
       var cores=Object.assign({available:false,min_cores:2,max_cores:0,active_cores:0,online_threads:0,total_threads:0},(stats&&stats.cores)||{});
+      var coresStatusText=function(op,draft){
+        if(!op) return '';
+        if(op.state==='running') return 'Изменение ядер: '+(op.stage||'выполняется')+(op.detail?' — '+op.detail:'')+'…';
+        if(op.state==='done') return 'Готово: активно '+(op.result&&op.result.applied)+' физ. ядер';
+        if(op.state==='error') return 'Не выполнено: '+((op.result&&op.result.error)||'неизвестная ошибка');
+        return draft!=null ? 'Запрошено '+draft+' ядер' : '';
+      };
       var target=num(cfg.target_fps,40),minTdp=num(cfg.min_tdp,15),maxTdp=Math.min(80,num(cfg.max_tdp,80)),initialTdp=num(cfg.initial_tdp,35);
       return h(React.Fragment,null,
         h(PanelSection,{title:'Auto TDP'},h(PanelSectionRow,null,h(ToggleField,{label:'Auto TDP',description:enabled?'Running':'Stopped',checked:enabled,onChange:toggle}))),
@@ -75,6 +83,9 @@ function looksLikeConfig(o){var keys=['enabled','target_fps','min_tdp','max_tdp'
           h(Row,{label:'Current TDP',value:t.current_tdp!=null?num(t.current_tdp,0).toFixed(1)+' W':'—'}),
           h(Row,{label:'TDP source',value:t.tdp_source==='setpoint'?'setpoint (ryzenadj readback unavailable)':(t.tdp_source||'—')}),
           h(Row,{label:'Average FPS',value:m.last_fps!=null?num(m.last_fps,0).toFixed(1):'—'}),
+          h(Row,{label:'Effective FPS goal',value:m.effective_target_fps!=null?String(m.effective_target_fps):'—'}),
+          h(Row,{label:'TDP decision',value:m.tdp_hold_level!=null?'capped at '+m.tdp_hold_level+' W':(m.tdp_decision||'—')}),
+          h(Row,{label:'Core evacuation',value:cores.evacuation?(cores.evacuation.ok?'ok, '+(cores.evacuation.moved_threads||0)+' threads moved':'blocked: '+(cores.evacuation_stuck||0)+' threads stuck'):'—'}),
           h(Row,{label:'CPU load',value:m.last_cpu_load!=null?num(m.last_cpu_load,0).toFixed(1)+'%':'—'}),
           h(Row,{label:'GPU load',value:m.last_gpu_load!=null?num(m.last_gpu_load,0).toFixed(1)+'%':'—'}),
           h(Row,{label:'Controller',value:m.state||'stopped'}),
@@ -82,7 +93,7 @@ function looksLikeConfig(o){var keys=['enabled','target_fps','min_tdp','max_tdp'
           h(PanelSectionRow,null,h(SliderField,{label:'Start TDP',description:enabled?'Used when Auto TDP starts':'Applied when Auto TDP is switched off',value:initialTdp,min:5,max:80,step:1,showValue:true,valueSuffix:' W',onChange:async function(v){var ok=await save('initial_tdp',v);if(ok&&!enabled)await rpc('set_tdp',{value:v});}})),
           h(PanelSectionRow,null,h(SliderField,{label:'Minimum TDP',value:minTdp,min:5,max:maxTdp,step:1,showValue:true,valueSuffix:' W',onChange:function(v){updateMonitorParam('min_tdp',v);}})),
           h(PanelSectionRow,null,h(SliderField,{label:'Maximum TDP',value:maxTdp,min:minTdp,max:80,step:1,showValue:true,valueSuffix:' W',onChange:function(v){updateMonitorParam('max_tdp',v);}})),
-          cores.available&&h(PanelSectionRow,null,h(SliderField,{label:'Active CPU cores',description:'Physical cores with SMT kept together; '+cores.online_threads+'/'+cores.total_threads+' threads online',value:cores.active_cores,min:cores.min_cores,max:cores.max_cores,step:1,showValue:true,onChange:function(v){rpc('set_active_cores',{cores:v}).then(function(res){if(!res||res.ok===false)setError('Не удалось изменить число ядер: '+((res&&(res.error||(res.failed&&res.failed.length?'не записаны CPU '+res.failed.join(', '):'')))||'нет ответа backend'));return refresh();});}})),
+          cores.available&&h(React.Fragment,null,h(PanelSectionRow,null,h(SliderField,{label:'Active CPU cores',description:'Physical cores with SMT kept together; '+cores.online_threads+'/'+cores.total_threads+' threads online',value:coresDraft!=null?coresDraft:cores.active_cores,min:cores.min_cores,max:cores.max_cores,step:1,showValue:true,onChange:function(v){setCoresDraft(v);rpc('set_active_cores',{cores:v}).then(function(res){if(!res||res.started===false)setError('Не удалось начать изменение ядер: '+((res&&res.error)||'нет ответа backend'));else setCoresDraft(v);});}})),h(PanelSectionRow,null,h('span',{style:{color:'#dbeafe'}},coresStatusText(cores.operation,coresDraft)))),
           h(PanelSectionRow,null,h(ToggleField,{label:'High-load TDP boost',description:cfg.load_boost_enabled?'CPU >'+num(cfg.load_boost_threshold,95)+'% boosts TDP even when FPS is already on target; GPU >'+num(cfg.load_boost_threshold,95)+'% boosts only when FPS is below target':'Disabled',checked:!!cfg.load_boost_enabled,onChange:async function(v){var ok=await save('load_boost_enabled',v);if(ok)await refresh();}})),
           h(PanelSectionRow,null,h(SliderField,{label:'High-load threshold',value:num(cfg.load_boost_threshold,95),min:90,max:100,step:1,showValue:true,valueSuffix:'%',onChange:function(v){save('load_boost_threshold',v);}})),
         ),

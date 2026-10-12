@@ -121,6 +121,7 @@ async def _initialize():
   if S.topology.available and saved is not None:
    S.topology.apply(int(saved))
   logger.info("AutoTDP: CPU topology cores=%s active=%s", len(S.topology.cores), S.topology.active_cores)
+  S.topology.on_applied=lambda n: S.cfg.set_value('active_cores',n) if S.cfg else None
  except Exception as e:
   ok=False; logger.exception("AutoTDP: CPU topology initialization failed: %s", e)
  S.epp=None
@@ -243,10 +244,13 @@ class Plugin:
   def _stats():
    r={'tdp':S.tdp.stats() if S.tdp else {'backend':'none'},
       'fan':S.fan.get_stats() if S.fan else {'available':False},
-      'epp_ok':S.epp is not None,'build':'2.0.0'}
+      'epp_ok':S.epp is not None,'build':'2.1.1'}
    if S.epp: r.update(S.epp.get_current_stats())
    r['monitor']=S.monitor.get_stats() if S.monitor else {'state':'stopped'}
    r['cores']=S.topology.get_stats() if S.topology else {'available':False,'max_cores':0,'min_cores':2,'active_cores':0}
+   if S.topology and S.topology.last_evacuation is not None:
+    r['cores']['evacuation']={k:v for k,v in S.topology.last_evacuation.items() if k!='stuck'}
+    r['cores']['evacuation_stuck']=len(S.topology.last_evacuation.get('stuck',[]))
    return r
   return await asyncio.to_thread(_stats)
 
@@ -286,10 +290,11 @@ class Plugin:
 
  @_safe(dict, 'set_active_cores')
  async def set_active_cores(self,cores):
+  """Запускает изменение числа ядер в фоне и сразу возвращает ответ (версия 2.1.1).
+  Ход выполнения читается через get_stats()['cores']['operation']."""
   if S.topology is None or not S.topology.available:
-   return {'ok':False,'error':'CPU topology not available'}
-  res=await asyncio.to_thread(S.topology.apply,int(cores))
-  if S.cfg: await asyncio.to_thread(S.cfg.set_value,'active_cores',int(res.get('applied',cores)))
+   return {'started':False,'error':'CPU topology not available'}
+  res=await asyncio.to_thread(S.topology.start_apply,int(cores))
   return res
 
  @_safe(dict, 'get_tdp_stats')
