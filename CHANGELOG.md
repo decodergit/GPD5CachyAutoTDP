@@ -1,3 +1,18 @@
+## 2.3.0
+
+- Removed the Active CPU cores feature completely: the slider, the status text under it, core evacuation, the IRQ and thread moving code, and the saved `active_cores` setting.
+- Removed backend modules `cpu_topology.py` and `core_evacuation.py` and the `set_active_cores` RPC.
+- One remaining action at startup and on unload: all CPUs are switched back online (backend/cpu_online.py). This restores the full core count if an earlier version left cores disabled. CPU 0 is never touched.
+- Status no longer shows "Core evacuation". The interface translations for core control were removed.
+- Build row shows 2.3.0.
+
+## 2.2.0
+
+- Interface language: English and Русский. The choice is at the bottom of the screen (Language section). It is saved in config.json as `language` ("en" or "ru") and restored on startup.
+- All interface texts come from one dictionary (`src/i18n.ts`); the English and Russian sets have the same keys.
+- Backend: `set_language` RPC accepts only "en" or "ru". `validate_config` rejects other values. Old configs without `language` default to English.
+- Build row shows 2.2.0.
+
 ## 2.1.1
 
 - Active CPU cores: the slider now stays where you set it while the change runs. The change runs in the background; the RPC returns at once. Under the slider the status is shown: stage, current item, result or error.

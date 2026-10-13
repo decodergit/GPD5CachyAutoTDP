@@ -46,9 +46,9 @@ _vendor_ryzenadj()
 from backend.config_manager import ConfigManager, ConfigException
 from backend.tdp_controller import TDPController, TDPControllerException
 from backend.monitor import TDPMonitor, TDPMonitorException
+from backend.cpu_online import restore_all_cpus
 from backend.fan_controller import FanController
 from backend.mangohud_controller import MangoHudController
-from backend.cpu_topology import CpuTopology
 try:
  from backend.epp_controller import EPPController, EPPNotAvailableException
 except Exception: EPPController=None
@@ -62,7 +62,7 @@ except Exception: EPPController=None
 class _State: pass
 S=_State()
 S.cfg=None; S.tdp=None; S.fan=None; S.mangohud=None; S.epp=None
-S.monitor=None; S.watchdog_task=None; S.topology=None
+S.monitor=None; S.watchdog_task=None
 
 WATCHDOG_TIMEOUT_S=10.0
 WATCHDOG_COOLDOWN_S=30.0
@@ -116,14 +116,11 @@ async def _initialize():
  except Exception as e:
   ok=False; logger.exception("AutoTDP: MangoHud initialization failed: %s", e)
  try:
-  S.topology=CpuTopology()
-  saved=S.cfg.get_value('active_cores',None) if S.cfg else None
-  if S.topology.available and saved is not None:
-   S.topology.apply(int(saved))
-  logger.info("AutoTDP: CPU topology cores=%s active=%s", len(S.topology.cores), S.topology.active_cores)
-  S.topology.on_applied=lambda n: S.cfg.set_value('active_cores',n) if S.cfg else None
+  # Версия 2.3.0: управление ядрами удалено. Если прошлая версия оставила ядра отключёнными,
+  # возвращаем все CPU онлайн, чтобы система работала на полном числе ядер.
+  restore_all_cpus()
  except Exception as e:
-  ok=False; logger.exception("AutoTDP: CPU topology initialization failed: %s", e)
+  logger.exception("AutoTDP: restoring CPUs failed: %s", e)
  S.epp=None
  if EPPController:
   try: S.epp=EPPController()
@@ -204,8 +201,7 @@ class Plugin:
    if S.monitor: S.monitor.stop()
    if S.fan: S.fan.disable()
   except Exception: logger.exception("Unload failed")
-  try:
-   if S.topology: S.topology.restore_all()
+  try: restore_all_cpus()
   except Exception: logger.exception("Restoring CPUs on unload failed")
 
  # ---- конфигурация ----------------------------------------------------
@@ -226,6 +222,13 @@ class Plugin:
   if S.cfg is None: return False
   return bool(await asyncio.to_thread(S.cfg.set_value,key,value))
 
+ @_safe(False, 'set_language')
+ async def set_language(self,language):
+  """Сохраняет язык интерфейса (en|ru) в config.json. Неизвестный язык отклоняется."""
+  if S.cfg is None: return False
+  if language not in ('en','ru'): return False
+  return bool(await asyncio.to_thread(S.cfg.set_value,'language',language))
+
  @_safe(False, 'reset_config')
  async def reset_config(self):
   if S.cfg is None: return False
@@ -244,13 +247,9 @@ class Plugin:
   def _stats():
    r={'tdp':S.tdp.stats() if S.tdp else {'backend':'none'},
       'fan':S.fan.get_stats() if S.fan else {'available':False},
-      'epp_ok':S.epp is not None,'build':'2.1.1'}
+      'epp_ok':S.epp is not None,'build':'2.3.0'}
    if S.epp: r.update(S.epp.get_current_stats())
    r['monitor']=S.monitor.get_stats() if S.monitor else {'state':'stopped'}
-   r['cores']=S.topology.get_stats() if S.topology else {'available':False,'max_cores':0,'min_cores':2,'active_cores':0}
-   if S.topology and S.topology.last_evacuation is not None:
-    r['cores']['evacuation']={k:v for k,v in S.topology.last_evacuation.items() if k!='stuck'}
-    r['cores']['evacuation_stuck']=len(S.topology.last_evacuation.get('stuck',[]))
    return r
   return await asyncio.to_thread(_stats)
 
@@ -287,15 +286,6 @@ class Plugin:
   ok=await asyncio.to_thread(S.tdp.set_tdp,v)
   if ok and S.cfg: await asyncio.to_thread(S.cfg.set_value,'last_tdp',v)
   return ok
-
- @_safe(dict, 'set_active_cores')
- async def set_active_cores(self,cores):
-  """Запускает изменение числа ядер в фоне и сразу возвращает ответ (версия 2.1.1).
-  Ход выполнения читается через get_stats()['cores']['operation']."""
-  if S.topology is None or not S.topology.available:
-   return {'started':False,'error':'CPU topology not available'}
-  res=await asyncio.to_thread(S.topology.start_apply,int(cores))
-  return res
 
  @_safe(dict, 'get_tdp_stats')
  async def get_tdp_stats(self):

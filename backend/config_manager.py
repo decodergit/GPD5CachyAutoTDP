@@ -25,7 +25,7 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "2.1.1",
+        "version": "2.3.0",
         "config_version": "2.0.0",
         "enabled": False,
         "target_fps": 40,
@@ -33,10 +33,10 @@ class ConfigManager:
         "max_tdp": 80,
         "initial_tdp": 35,
         "last_tdp": None,
-        "active_cores": None,
         "load_boost_enabled": True,
         "load_boost_threshold": 95,
         "mangohud_display": False,
+        "language": "en",
         "enable_auto_adjust": True,
         "check_interval_sec": 3,
         "hysteresis_threshold": 5,
@@ -254,8 +254,11 @@ class ConfigManager:
         self.set_value("current_profile", name)
         return True
 
+    SUPPORTED_LANGUAGES = ("en", "ru")
+
     def validate_config(self, config: Dict[str, Any]) -> Tuple[bool, str]:
         if not isinstance(config.get("enabled", False), bool): return False, "enabled must be bool"
+        if config.get("language", "en") not in self.SUPPORTED_LANGUAGES: return False, "language must be en or ru"
         if not (1 <= int(config.get("target_fps",40)) <= 120): return False, "target_fps must be 1-120"
         if float(config.get("min_tdp",15)) > float(config.get("max_tdp",80)): return False, "min_tdp must be <= max_tdp"
         return True, ""
