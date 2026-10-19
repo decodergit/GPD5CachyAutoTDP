@@ -47,7 +47,7 @@ from backend.config_manager import ConfigManager, ConfigException
 from backend.tdp_controller import TDPController, TDPControllerException
 from backend.monitor import TDPMonitor, TDPMonitorException
 from backend.cpu_online import restore_all_cpus
-from backend.fan_controller import FanController
+from backend.fan_controller import FanController, FanControllerException
 from backend.mangohud_controller import MangoHudController
 try:
  from backend.epp_controller import EPPController, EPPNotAvailableException
@@ -62,7 +62,7 @@ except Exception: EPPController=None
 class _State: pass
 S=_State()
 S.cfg=None; S.tdp=None; S.fan=None; S.mangohud=None; S.epp=None
-S.monitor=None; S.watchdog_task=None
+S.monitor=None; S.watchdog_task=None; S.init_errors=[]
 
 WATCHDOG_TIMEOUT_S=10.0
 WATCHDOG_COOLDOWN_S=30.0
@@ -97,24 +97,25 @@ async def _stop_runtime():
 async def _initialize():
  logger.info("AutoTDP: initialization start")
  ok=True
+ S.init_errors=[]
  try:
   S.cfg=ConfigManager(SETTINGS_DIR); S.cfg.load_config(); logger.info("AutoTDP: config ready")
  except Exception as e:
-  ok=False; logger.exception("AutoTDP: config initialization failed: %s", e)
+  ok=False; S.init_errors.append(f"config: {e}"); logger.exception("AutoTDP: config initialization failed: %s", e)
  try:
   S.tdp=TDPController(); logger.info("AutoTDP: TDP ready backend=%s", S.tdp.backend)
  except Exception as e:
-  ok=False; logger.exception("AutoTDP: TDP initialization failed: %s", e)
+  ok=False; S.init_errors.append(f"tdp: {e}"); logger.exception("AutoTDP: TDP initialization failed: %s", e)
  try:
   S.fan=FanController(); logger.info("AutoTDP: fan ready available=%s", S.fan.is_available())
  except Exception as e:
-  ok=False; logger.exception("AutoTDP: fan initialization failed: %s", e)
+  ok=False; S.init_errors.append(f"fan: {e}"); logger.exception("AutoTDP: fan initialization failed: %s", e)
  try:
   S.mangohud=MangoHudController(); logger.info("AutoTDP: MangoHud config=%s", S.mangohud.get_path())
   try: S.mangohud.set_display(bool(S.cfg.get_value("mangohud_display", False)))
   except Exception as e: logger.warning("MangoHud visibility setup failed: %s", e)
  except Exception as e:
-  ok=False; logger.exception("AutoTDP: MangoHud initialization failed: %s", e)
+  ok=False; S.init_errors.append(f"mangohud: {e}"); logger.exception("AutoTDP: MangoHud initialization failed: %s", e)
  try:
   # Версия 2.3.0: управление ядрами удалено. Если прошлая версия оставила ядра отключёнными,
   # возвращаем все CPU онлайн, чтобы система работала на полном числе ядер.
@@ -129,7 +130,7 @@ async def _initialize():
  try:
   S.monitor=TDPMonitor(S.tdp,S.cfg,S.fan); logger.info("AutoTDP: monitor ready")
  except Exception as e:
-  ok=False; logger.exception("AutoTDP: monitor initialization failed: %s", e)
+  ok=False; S.init_errors.append(f"monitor: {e}"); logger.exception("AutoTDP: monitor initialization failed: %s", e)
  try:
   if S.cfg and S.fan:
    fc=S.cfg.get_value('fan_control',{})
@@ -247,7 +248,7 @@ class Plugin:
   def _stats():
    r={'tdp':S.tdp.stats() if S.tdp else {'backend':'none'},
       'fan':S.fan.get_stats() if S.fan else {'available':False},
-      'epp_ok':S.epp is not None,'build':'2.3.0'}
+      'epp_ok':S.epp is not None,'build':'3.2.0','init_errors':list(S.init_errors)}
    if S.epp: r.update(S.epp.get_current_stats())
    r['monitor']=S.monitor.get_stats() if S.monitor else {'state':'stopped'}
    return r
@@ -280,6 +281,17 @@ class Plugin:
    if target_fps is not None: await asyncio.to_thread(S.cfg.set_value,'target_fps',int(target_fps))
   return ok
 
+ @_safe(False, 'set_check_interval')
+ async def set_check_interval(self,seconds):
+  """Меняет период опроса на лету. Допустимо 0.5–10 с; границы проверяет схема конфига."""
+  v=max(0.5,min(10.0,float(seconds)))
+  if S.cfg:
+   await asyncio.to_thread(S.cfg.set_value,'check_interval_sec',v)
+  if S.monitor:
+   # Контроллер подстраивает интервал подъёма и окно плато под новый период.
+   await asyncio.to_thread(S.monitor._sync_bounds)
+  return True
+
  @_safe(False, 'set_tdp')
  async def set_tdp(self,value):
   v=float(value)
@@ -311,17 +323,21 @@ class Plugin:
  async def get_fan_curve(self):
   return await asyncio.to_thread(S.fan.get_current_curve)
 
- @_safe(False, 'set_fan_curve')
+ @_safe({'ok':False,'error':'internal error'}, 'set_fan_curve')
  async def set_fan_curve(self,curve):
-  ok=await asyncio.to_thread(S.fan.set_curve,curve)
-  if S.cfg: await asyncio.to_thread(S.cfg.set_value,'fan_control.curve',S.fan.get_current_curve())
-  return ok
+  """Возвращает {ok, error}. При ошибке валидации кривой error содержит причину."""
+  try:
+   await asyncio.to_thread(S.fan.set_curve,curve)
+  except FanControllerException as e:
+   return {'ok':False,'error':str(e)}
+  if S.cfg: await asyncio.to_thread(S.cfg.set_internal,'fan_control.curve',S.fan.get_current_curve())
+  return {'ok':True,'error':''}
 
- @_safe(False, 'reset_fan_curve')
+ @_safe({'ok':False,'error':'internal error'}, 'reset_fan_curve')
  async def reset_fan_curve(self):
-  ok=await asyncio.to_thread(S.fan.reset_curve)
-  if S.cfg: await asyncio.to_thread(S.cfg.set_value,'fan_control.curve',S.fan.get_current_curve())
-  return ok
+  await asyncio.to_thread(S.fan.reset_curve)
+  if S.cfg: await asyncio.to_thread(S.cfg.set_internal,'fan_control.curve',S.fan.get_current_curve())
+  return {'ok':True,'error':''}
 
  @_safe(False, 'enable_fan_control')
  async def enable_fan_control(self):
@@ -345,8 +361,8 @@ class Plugin:
   p=S.cfg.get_profile(name)
   if not p: return False
   for k in ('min_tdp','max_tdp','target_fps'):
-   if k in p: S.cfg.set_value(k,p[k])
-  S.cfg.set_value('current_profile',name); return True
+   if k in p: S.cfg.set_internal(k,p[k])
+  S.cfg.set_internal('current_profile',name); return True
 
  @_safe(False, 'save_profile')
  async def save_profile(self,name,tdp_min,tdp_max,target_fps,description=''):

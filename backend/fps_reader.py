@@ -96,40 +96,69 @@ class FPSReader:
             return None
         return max((Path(x) for x in current), key=lambda x: current[str(x)])
 
-    @staticmethod
-    def _metric_values(path: Path, metric: str) -> List[float]:
-        """Read a numeric metric from Mangoapp CSVs, including CachyOS two-header CSVs."""
-        vals: List[float] = []
-        try:
-            with path.open('r', newline='', errors='replace') as f:
-                rows = list(csv.reader(f))
-        except OSError:
-            return vals
-        if not rows:
-            return vals
+    # Сколько байт хвоста CSV читать. Строка MangoHud ~50 байт, 64 КБ — это больше
+    # 1000 последних кадров, при 10 строках/с хватает с большим запасом.
+    TAIL_BYTES = 65536
+    # Сколько последних значений усреднять.
+    AVG_SAMPLES = 30
 
-        # CachyOS mangoapp CSV: system-info header first, frame-metrics header second.
-        header_idx = None
-        for i, row in enumerate(rows[:5]):
-            keys = [str(x).strip().lower() for x in row]
-            if metric.lower() in keys:
-                header_idx = i
-                break
-        if header_idx is None:
-            return vals
-        keys = [str(x).strip().lower() for x in rows[header_idx]]
+    @classmethod
+    def _read_metrics_once(cls, path: Path, metrics: List[str]) -> Dict[str, List[float]]:
+        """Читает CSV ОДИН раз и возвращает последние значения для каждой метрики.
+
+        Раньше файл читался отдельно на каждую метрику: 3 полных чтения за опрос.
+        На файле в несколько мегабайт это сотни миллисекунд, и частый опрос становился
+        дороже, чем польза от него. Теперь читаются только заголовок и хвост файла.
+        """
+        out: Dict[str, List[float]] = {m: [] for m in metrics}
         try:
-            idx = keys.index(metric.lower())
-        except ValueError:
-            return vals
-        for row in rows[header_idx + 1:]:
-            if idx >= len(row):
-                continue
+            size = path.stat().st_size
+            with path.open('r', newline='', errors='replace') as f:
+                # 1. Заголовок: CachyOS mangoapp пишет системную строку, затем строку метрик.
+                head = f.read(4096)
+                head_rows = list(csv.reader(head.splitlines()))
+                header_idx = None
+                header = None
+                for i, row in enumerate(head_rows[:5]):
+                    keys = [str(x).strip().lower() for x in row]
+                    if any(m.lower() in keys for m in metrics):
+                        header_idx, header = i, keys
+                        break
+                if header is None:
+                    return out
+                # 2. Хвост: только последние строки, а не весь файл.
+                start = max(0, size - cls.TAIL_BYTES)
+                f.seek(start)
+                if start > 0:
+                    f.readline()  # первая строка может быть обрезана — пропускаем
+                tail = f.read()
+        except (OSError, ValueError):
+            return out
+
+        idx = {}
+        for m in metrics:
             try:
-                vals.append(float(str(row[idx]).strip()))
-            except (ValueError, TypeError):
-                pass
-        return vals
+                idx[m] = header.index(m.lower())
+            except ValueError:
+                continue
+        want = len(idx)
+        rows = csv.reader(tail.splitlines())
+        if want == 0:
+            return out
+        for row in rows:
+            for m, i in idx.items():
+                if i >= len(row):
+                    continue
+                try:
+                    out[m].append(float(str(row[i]).strip()))
+                except (ValueError, TypeError):
+                    pass
+        return out
+
+    @classmethod
+    def _metric_values(cls, path: Path, metric: str) -> List[float]:
+        """Совместимость: значения одной метрики (используется в stats и тестах)."""
+        return cls._read_metrics_once(path, [metric]).get(metric, [])
 
     @classmethod
     def _fps_values(cls, path: Path) -> List[float]:
@@ -166,7 +195,7 @@ class FPSReader:
             return None
 
     def read_metrics(self) -> Dict[str, Optional[float]]:
-        """Return recent average FPS/CPU/GPU load from the current live CSV."""
+        """Средний FPS и загрузки из живого CSV MangoHud: одно чтение файла на все метрики."""
         p = self._latest()
         if not p:
             return {'fps': None, 'cpu_load': None, 'gpu_load': None}
@@ -177,11 +206,15 @@ class FPSReader:
                 self.path = p
                 self.last_fps = None
                 self.last_rows = 0
+            data = self._read_metrics_once(p, ['fps', 'cpu_load', 'gpu_load'])
+            self._last_metrics = data
+
             def avg(metric: str, lo: float, hi: float) -> Optional[float]:
-                values = [v for v in self._metric_values(p, metric) if lo <= v <= hi]
+                values = [v for v in data.get(metric, []) if lo <= v <= hi]
                 if not values:
                     return None
-                return sum(values[-30:]) / min(30, len(values))
+                return sum(values[-self.AVG_SAMPLES:]) / min(self.AVG_SAMPLES, len(values))
+
             fps = avg('fps', 0.001, 1000.0)
             cpu = avg('cpu_load', 0.0, 100.0)
             gpu = avg('gpu_load', 0.0, 100.0)
@@ -193,7 +226,14 @@ class FPSReader:
             return {'fps': None, 'cpu_load': None, 'gpu_load': None}
 
     def stats(self) -> Dict:
-        metrics = self.read_metrics()
-        return {'available': self._latest() is not None, 'fps': metrics['fps'], 'cpu_load': metrics['cpu_load'], 'gpu_load': metrics['gpu_load'],
+        """Без повторного чтения CSV: отдаёт результат последнего read_metrics."""
+        m = getattr(self, '_last_metrics', {}) or {}
+
+        def last(key):
+            vals = list(m.get(key, []))
+            return vals[-1] if vals else None
+
+        return {'available': self._latest() is not None, 'fps': self.last_fps,
+                'cpu_load': last('cpu_load'), 'gpu_load': last('gpu_load'),
                 'source': str(self.path) if self.path else None,
                 'logging_started_by_plugin': self.started_logging}

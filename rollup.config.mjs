@@ -19,7 +19,9 @@ export default {
       "@decky/api": "DFL"
     },
     intro: "",
-    outro: ""
+    // Decky (legacy IIFE) использует значение выражения скрипта как объект плагина.
+    // Поэтому после присваивания возвращаем его как результат.
+    footer: "AutoTDP_Plugin"
   },
   external: ["react", "react-dom", "react/jsx-runtime", "@decky/ui", "@decky/api"],
   plugins: [

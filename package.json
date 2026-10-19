@@ -1,6 +1,6 @@
 {
   "name": "gpd5cachyautotdp",
-  "version": "2.3.0",
+  "version": "3.2.0",
   "description": "Automatic TDP control by target FPS and GPD WIN 5 fan curve for CachyOS",
   "author": "GPD5CachyAutoTDP Contributors",
   "license": "MIT",
@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@decky/api": "^1.1.2",
-    "@decky/ui": "^2.0.0",
+    "@decky/ui": "^4.15.1",
     "react": "^18.2.0"
   },
   "devDependencies": {

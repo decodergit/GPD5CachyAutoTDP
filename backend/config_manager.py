@@ -25,8 +25,8 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "2.3.0",
-        "config_version": "2.0.0",
+        "version": "3.2.0",
+        "config_version": "3.0.0",
         "enabled": False,
         "target_fps": 40,
         "min_tdp": 15,
@@ -38,7 +38,7 @@ class ConfigManager:
         "mangohud_display": False,
         "language": "en",
         "enable_auto_adjust": True,
-        "check_interval_sec": 3,
+        "check_interval_sec": 1,
         "hysteresis_threshold": 5,
         "current_profile": "balanced",
         "profiles": {
@@ -137,6 +137,9 @@ class ConfigManager:
                     merged["max_tdp"] = 80
                     merged["config_version"] = "2.0.0"
                     migrated = True
+                # 3.0.0: период опроса по умолчанию снижен с 3 до 1 с. У существующих
+                # конфигов значение уже записано, поэтому оно сохраняется как есть:
+                # молча менять поведение у тех, кто настроил интервал, нельзя.
                 if "initial_tdp" not in loaded:
                     merged["initial_tdp"] = min(35, merged["max_tdp"])
                 self._config = merged
@@ -204,22 +207,72 @@ class ConfigManager:
                     return default
             return copy.deepcopy(node)
 
+    # Схема ключей, которые можно менять через RPC: (тип, минимум, максимум). None — без ограничения.
+    VALUE_SCHEMA: Dict[str, Tuple[type, Any, Any]] = {
+        "enabled": (bool, None, None),
+        "target_fps": (int, 1, 120),
+        "min_tdp": (float, 5.0, 80.0),
+        "max_tdp": (float, 5.0, 80.0),
+        "initial_tdp": (float, 5.0, 80.0),
+        "last_tdp": (float, 5.0, 80.0),
+        "load_boost_enabled": (bool, None, None),
+        "load_boost_threshold": (float, 90.0, 100.0),
+        "mangohud_display": (bool, None, None),
+        "language": (str, None, None),
+        "check_interval_sec": (float, 0.5, 10.0),
+        "fan_control.enabled": (bool, None, None),
+    }
+    def _check_value(self, key: str, value: Any) -> None:
+        if key not in self.VALUE_SCHEMA:
+            raise ConfigException(f"unknown config key '{key}'")
+        typ, lo, hi = self.VALUE_SCHEMA[key]
+        if typ is bool:
+            if not isinstance(value, bool):
+                raise ConfigException(f"'{key}' must be a boolean")
+            return
+        if typ is str:
+            if not isinstance(value, str):
+                raise ConfigException(f"'{key}' must be a string")
+            if key == "language" and value not in self.SUPPORTED_LANGUAGES:
+                raise ConfigException("language must be en or ru")
+            return
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ConfigException(f"'{key}' must be a number")
+        if typ is int and not float(value).is_integer():
+            raise ConfigException(f"'{key}' must be an integer")
+        if lo is not None and value < lo:
+            raise ConfigException(f"'{key}' must be >= {lo}")
+        if hi is not None and value > hi:
+            raise ConfigException(f"'{key}' must be <= {hi}")
+
     def set_value(self, key: str, value: Any) -> bool:
         with self._lock:
             if self._config is None:
                 self.load_config()
-            keys = key.split('.')
-            if not keys:
-                raise ConfigException("Empty key")
-            node = self._config
-            for k in keys[:-1]:
-                if k not in node:
-                    node[k] = {}
-                if not isinstance(node[k], dict):
-                    raise ConfigException(f"Non-dict node at '{k}'")
-                node = node[k]
-            node[keys[-1]] = value
-            return self.save_config()
+            self._check_value(key, value)
+            return self._set_internal(key, value)
+
+    def set_internal(self, key: str, value: Any) -> bool:
+        """Запись без проверки схемы: только для служебных ключей самого плагина
+        (last_tdp, current_profile, поля профиля). Не вызывается из RPC."""
+        with self._lock:
+            if self._config is None:
+                self.load_config()
+            return self._set_internal(key, value)
+
+    def _set_internal(self, key: str, value: Any) -> bool:
+        keys = key.split('.')
+        if not keys:
+            raise ConfigException("Empty key")
+        node = self._config
+        for k in keys[:-1]:
+            if k not in node:
+                node[k] = {}
+            if not isinstance(node[k], dict):
+                raise ConfigException(f"Non-dict node at '{k}'")
+            node = node[k]
+        node[keys[-1]] = value
+        return self.save_config()
 
     # ------------------------------------------------------------------
 
@@ -250,8 +303,8 @@ class ConfigManager:
             raise ConfigException(f"Profile not found: {name}")
         for key in ("min_tdp", "max_tdp", "target_fps"):
             if key in profile:
-                self.set_value(key, profile[key])
-        self.set_value("current_profile", name)
+                self.set_internal(key, profile[key])
+        self.set_internal("current_profile", name)
         return True
 
     SUPPORTED_LANGUAGES = ("en", "ru")

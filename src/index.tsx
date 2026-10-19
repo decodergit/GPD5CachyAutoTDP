@@ -68,6 +68,8 @@ function makeContent(serverAPI: ServerAPI) {
     const [cfg,setCfg] = useState<any>(null);
     const [stats,setStats] = useState<any>(null);
     const [error,setError] = useState<string>('');
+    const [curveEdit,setCurveEdit]=useState<Array<{t:number;s:number}>|null>(null);
+    const [curveMsg,setCurveMsg]=useState<string>('');
     const tr = (key:string, ...args:Array<string|number>) => translate(cfg&&cfg.language, key, ...args);
     const pendingTimers = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
     const refreshBlockedUntil = useRef(0);
@@ -133,19 +135,38 @@ function makeContent(serverAPI: ServerAPI) {
     const t=(stats&&stats.tdp)||{};
     const m=(stats&&stats.monitor)||{};
     const f=(stats&&stats.fan)||{};
+    const curveFromConfig=(c:any)=>{
+      const cur=(c&&c.fan_control&&c.fan_control.curve)||{};
+      const byTemp:Record<number,number>={};
+      Object.keys(cur).forEach((k:any)=>{
+        const t=Number(k), s=Number(cur[k]);
+        if(!Number.isFinite(t)||!Number.isFinite(s)) return;
+        // Если в конфиге по одной температуре оказалось несколько значений (старый формат,
+        // ручная правка), оставляем МАКСИМУМ: выше скорость — безопаснее, и это убирает
+        // визуальные «дубли» точек.
+        byTemp[t]=byTemp[t]===undefined?Math.max(0,Math.min(100,s)):Math.max(byTemp[t],Math.max(0,Math.min(100,s)));
+      });
+      const arr=Object.keys(byTemp).map((k:any)=>({t:Number(k),s:byTemp[Number(k)]}));
+      arr.sort((a:any,b:any)=>a.t-b.t);
+      return arr.length?arr:[{t:50,s:20},{t:95,s:100}];
+    };
+    const updateCurvePoint=(list:Array<{t:number;s:number}>,i:number,key:'t'|'s',v:number)=>list.map((p:any,j:number)=>j===i?{...p,[key]:v}:p);
     const target=safeNum(cfg.target_fps,40);
     const minTdp=safeNum(cfg.min_tdp,15);
     const maxTdp=Math.min(80,safeNum(cfg.max_tdp,80));
     const initialTdp=safeNum(cfg.initial_tdp,35);
 
     return <>
-      <PanelSection title="Auto TDP">
+      <PanelSection title={tr('section.autotdp')}>
         <PanelSectionRow>
-          <ToggleField label="Auto TDP" description={enabled?'Running':'Stopped'} checked={enabled} onChange={toggle}/>
+          <ToggleField label={tr('toggle.autotdp')} description={enabled?tr('toggle.running'):tr('toggle.stopped')} checked={enabled} onChange={toggle}/>
         </PanelSectionRow>
       </PanelSection>
-      {error && <PanelSection title="Status"><PanelSectionRow><span style={{color:'#ffb3b3'}}>{error}</span></PanelSectionRow></PanelSection>}
-      <PanelSection title="Auto TDP / FPS">
+            {(error || (stats&&stats.init_errors&&stats.init_errors.length)) && <PanelSection title={tr('section.status')}>
+        {error && <PanelSectionRow><span style={{color:'#ffb3b3'}}>{error}</span></PanelSectionRow>}
+        {stats&&stats.init_errors&&stats.init_errors.map((e:any,i:number)=><PanelSectionRow key={i}><span style={{color:'#ffb3b3'}}>{tr('init.title')}: {String(e)}</span></PanelSectionRow>)}
+      </PanelSection>}
+      <PanelSection title={tr('section.fps')}>
         <Row label={tr('row.build')} value={(stats&&stats.build) || tr('row.build.old')}/>
         <Row label={tr('row.tdpBackend')} value={t.backend || 'none'}/>
         <Row label={tr('row.currentTdp')} value={t.current_tdp!=null ? `${safeNum(t.current_tdp,0).toFixed(1)} W` : '—'}/>
@@ -153,6 +174,10 @@ function makeContent(serverAPI: ServerAPI) {
         <Row label={tr('row.avgFps')} value={m.last_fps!=null ? safeNum(m.last_fps,0).toFixed(1) : '—'}/>
         <Row label={tr('row.effectiveGoal')} value={m.effective_target_fps!=null ? String(m.effective_target_fps) : '—'}/>
         <Row label={tr('row.tdpDecision')} value={m.tdp_hold_level!=null ? tr('row.tdpCapped', m.tdp_hold_level) : (m.tdp_decision || '—')}/>
+        <Row label={tr('search.state')} value={tr('search.state.'+((m.tdp_search&&m.tdp_search.state)||'idle'))}/>
+        <Row label={tr('search.good')} value={(m.tdp_search&&m.tdp_search.good_w)!=null?`${m.tdp_search.good_w} W`:tr('search.unknown')}/>
+        <Row label={tr('search.bad')} value={(m.tdp_search&&m.tdp_search.bad_w)!=null?`${m.tdp_search.bad_w} W`:tr('search.unknown')}/>
+        <Row label={tr('search.probes')} value={(m.tdp_search&&(m.tdp_search.last_search_probes||m.tdp_search.probes))||0}/>
         <Row label={tr('row.cpuLoad')} value={m.last_cpu_load!=null ? `${safeNum(m.last_cpu_load,0).toFixed(1)}%` : '—'}/>
         <Row label={tr('row.gpuLoad')} value={m.last_gpu_load!=null ? `${safeNum(m.last_gpu_load,0).toFixed(1)}%` : '—'}/>
         <Row label={tr('row.controller')} value={m.state || tr('row.controller.stopped')}/>
@@ -161,6 +186,7 @@ function makeContent(serverAPI: ServerAPI) {
         <PanelSectionRow><SliderField label={tr('slider.minTdp')} value={minTdp} min={5} max={maxTdp} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('min_tdp',v)}/></PanelSectionRow>
         <PanelSectionRow><SliderField label={tr('slider.maxTdp')} value={maxTdp} min={minTdp} max={80} step={1} showValue valueSuffix=" W" onChange={(v:number)=>updateMonitorParam('max_tdp',v)}/></PanelSectionRow>
         <PanelSectionRow><ToggleField label={tr('toggle.loadBoost')} description={cfg.load_boost_enabled?tr('toggle.loadBoost.on', safeNum(cfg.load_boost_threshold,95)):tr('toggle.loadBoost.off')} checked={!!cfg.load_boost_enabled} onChange={async(v:boolean)=>{const ok=await save('load_boost_enabled',v);if(ok) await refresh();}}/></PanelSectionRow>
+        <PanelSectionRow><SliderField label={tr('slider.interval')} description={tr('slider.interval.desc')} value={safeNum(cfg.check_interval_sec,1)} min={0.5} max={5} step={0.5} showValue valueSuffix=" s" onChange={async(v:number)=>{setCfg((x:any)=>({...x,check_interval_sec:v})); const ok=await rpc('set_check_interval',{seconds:v}); if(!ok) setError(tr('err.save'));}}/></PanelSectionRow>
         <PanelSectionRow><SliderField label={tr('slider.threshold')} value={safeNum(cfg.load_boost_threshold,95)} min={90} max={100} step={1} showValue valueSuffix="%" onChange={(v:number)=>save('load_boost_threshold',v)}/></PanelSectionRow>
       </PanelSection>
 
@@ -174,6 +200,36 @@ function makeContent(serverAPI: ServerAPI) {
           <ToggleField label={tr('fan.control')} description={cfg.fan_control?.enabled?tr('fan.control.on'):tr('fan.control.off')} checked={!!cfg.fan_control?.enabled} disabled={!f.available} onChange={async(v:boolean)=>{const ok=await rpc(v?'enable_fan_control':'disable_fan_control');if(ok) await refresh();}}/>
         </PanelSectionRow>
         {!f.available && <PanelSectionRow><span style={{color:'#94a3b8'}}>{tr('fan.notDetected')}</span></PanelSectionRow>}
+        {f.available && <>
+          <PanelSectionRow><span style={{color:'#dbeafe'}}>{tr('curve.hint')}</span></PanelSectionRow>
+          {(curveEdit || curveFromConfig(cfg)).map((pt:any,i:number)=>(
+            <PanelSectionRow key={`t${i}`}>
+              <SliderField label={`${tr('curve.point', i+1)} — ${tr('curve.temp')}`} value={pt.t} min={20} max={110} step={1} showValue
+                onChange={(v:number)=>setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 't', v))}/>
+            </PanelSectionRow>))}
+          {(curveEdit || curveFromConfig(cfg)).map((pt:any,i:number)=>(
+            <PanelSectionRow key={`s${i}`}>
+              <SliderField label={`${tr('curve.point', i+1)} — ${tr('curve.speed')}`} value={pt.s} min={0} max={100} step={1} showValue
+                onChange={(v:number)=>setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 's', v))}/>
+            </PanelSectionRow>))}
+          <PanelSectionRow><ButtonItem onClick={()=>setCurveEdit([...(curveEdit || curveFromConfig(cfg)), {t:100,s:100}])}>{tr('curve.add')}</ButtonItem></PanelSectionRow>
+          <PanelSectionRow><ButtonItem onClick={()=>setCurveEdit((curveEdit || curveFromConfig(cfg)).slice(0,-1))}>{tr('curve.remove')}</ButtonItem></PanelSectionRow>
+          <PanelSectionRow><ButtonItem onClick={async()=>{
+            const list = curveEdit || curveFromConfig(cfg);
+            // Склеиваем точки с одинаковой температурой, оставляя бо́льшую скорость:
+            // иначе бэкенд получит словарь с потерянными точками, а редактор покажет их заново.
+            const obj:any = {};
+            list.forEach((p:any)=>{
+              const key=String(Math.round(p.t)), val=Math.round(p.s);
+              obj[key]=obj[key]===undefined?val:Math.max(obj[key],val);
+            });
+            const res = await rpc('set_fan_curve',{curve:obj});
+            if (res && res.ok) { setCurveMsg(tr('curve.saved')); setCurveEdit(null); await refresh(); }
+            else setCurveMsg(tr('curve.saveFail', (res&&res.error)||tr('search.unknown')));
+          }}>{tr('curve.save')}</ButtonItem></PanelSectionRow>
+          <PanelSectionRow><ButtonItem onClick={async()=>{ const res=await rpc('reset_fan_curve'); if(res&&res.ok){setCurveEdit(null); setCurveMsg(''); await refresh();} else setCurveMsg(tr('curve.saveFail',(res&&res.error)||tr('search.unknown'))); }}>{tr('curve.reset')}</ButtonItem></PanelSectionRow>
+          {curveMsg && <PanelSectionRow><span style={{color:'#dbeafe'}}>{curveMsg}</span></PanelSectionRow>}
+        </>}
       </PanelSection>
 
       <PanelSection title={tr('section.source')}>
