@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 GPD5CachyAutoTDP Contributors
 import React, { useEffect, useRef, useState } from 'react';
-import { PanelSection, PanelSectionRow, SliderField, ToggleField, ButtonItem, staticClasses } from '@decky/ui';
+import { PanelSection, PanelSectionRow, SliderField, ToggleField, ButtonItem, staticClasses, showModal } from '@decky/ui';
 import { translate } from './i18n';
+import { CurveGraph, FanCurveModal, CurvePoint } from './FanCurve';
 
 type ServerAPI = { callPluginMethod: (method: string, args?: Record<string, unknown>) => Promise<any> };
 
@@ -68,7 +69,6 @@ function makeContent(serverAPI: ServerAPI) {
     const [cfg,setCfg] = useState<any>(null);
     const [stats,setStats] = useState<any>(null);
     const [error,setError] = useState<string>('');
-    const [curveEdit,setCurveEdit]=useState<Array<{t:number;s:number}>|null>(null);
     const [curveMsg,setCurveMsg]=useState<string>('');
     const tr = (key:string, ...args:Array<string|number>) => translate(cfg&&cfg.language, key, ...args);
     const pendingTimers = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
@@ -164,7 +164,6 @@ function makeContent(serverAPI: ServerAPI) {
       arr.sort((a:any,b:any)=>a.t-b.t);
       return arr.length?arr:[{t:50,s:20},{t:95,s:100}];
     };
-    const updateCurvePoint=(list:Array<{t:number;s:number}>,i:number,key:'t'|'s',v:number)=>list.map((p:any,j:number)=>j===i?{...p,[key]:v}:p);
     const target=safeNum(cfg.target_fps,40);
     const minTdp=safeNum(cfg.min_tdp,15);
     const maxTdp=Math.min(80,safeNum(cfg.max_tdp,80));
@@ -223,33 +222,28 @@ function makeContent(serverAPI: ServerAPI) {
         </PanelSectionRow>
         {!f.available && <PanelSectionRow><span style={{color:'#94a3b8'}}>{tr('fan.notDetected')}</span></PanelSectionRow>}
         {f.available && <>
-          <PanelSectionRow><span style={{color:'#dbeafe'}}>{tr('curve.hint')}</span></PanelSectionRow>
-          {(curveEdit || curveFromConfig(cfg)).map((pt:any,i:number)=>(
-            <PanelSectionRow key={`t${i}`}>
-              <SliderField label={`${tr('curve.point', i+1)} — ${tr('curve.temp')}`} value={pt.t} min={20} max={110} step={1} showValue
-                onChange={(v:number)=>setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 't', v))}/>
-            </PanelSectionRow>))}
-          {(curveEdit || curveFromConfig(cfg)).map((pt:any,i:number)=>(
-            <PanelSectionRow key={`s${i}`}>
-              <SliderField label={`${tr('curve.point', i+1)} — ${tr('curve.speed')}`} value={pt.s} min={0} max={100} step={1} showValue
-                onChange={(v:number)=>setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 's', v))}/>
-            </PanelSectionRow>))}
-          <PanelSectionRow><ButtonItem onClick={()=>setCurveEdit([...(curveEdit || curveFromConfig(cfg)), {t:100,s:100}])}>{tr('curve.add')}</ButtonItem></PanelSectionRow>
-          <PanelSectionRow><ButtonItem onClick={()=>setCurveEdit((curveEdit || curveFromConfig(cfg)).slice(0,-1))}>{tr('curve.remove')}</ButtonItem></PanelSectionRow>
-          <PanelSectionRow><ButtonItem onClick={async()=>{
-            const list = curveEdit || curveFromConfig(cfg);
-            // Склеиваем точки с одинаковой температурой, оставляя бо́льшую скорость:
-            // иначе бэкенд получит словарь с потерянными точками, а редактор покажет их заново.
-            const obj:any = {};
-            list.forEach((p:any)=>{
-              const key=String(Math.round(p.t)), val=Math.round(p.s);
-              obj[key]=obj[key]===undefined?val:Math.max(obj[key],val);
-            });
-            const res = await rpc('set_fan_curve',{curve:obj});
-            if (res && res.ok) { setCurveMsg(tr('curve.saved')); setCurveEdit(null); await refresh(); }
-            else setCurveMsg(tr('curve.saveFail', (res&&res.error)||tr('search.unknown')));
-          }}>{tr('curve.save')}</ButtonItem></PanelSectionRow>
-          <PanelSectionRow><ButtonItem onClick={async()=>{ const res=await rpc('reset_fan_curve'); if(res&&res.ok){setCurveEdit(null); setCurveMsg(''); await refresh();} else setCurveMsg(tr('curve.saveFail',(res&&res.error)||tr('search.unknown'))); }}>{tr('curve.reset')}</ButtonItem></PanelSectionRow>
+          <PanelSectionRow>
+            <div style={{width:'100%'}}>
+              <CurveGraph points={curveFromConfig(cfg)} height={150}
+                now={{t: f.current_temperature!=null ? safeNum(f.current_temperature,0) : null,
+                      s: f.pwm_percent?.length && f.pwm_percent[0]!=null ? safeNum(f.pwm_percent[0],0) : null}}/>
+              {f.current_temperature!=null && <div style={{fontSize:12,color:'#ffb347',textAlign:'right'}}>
+                {tr('curve.now', safeNum(f.current_temperature,0).toFixed(0), f.pwm_percent?.length && f.pwm_percent[0]!=null ? safeNum(f.pwm_percent[0],0).toFixed(0) : '—')}
+              </div>}
+            </div>
+          </PanelSectionRow>
+          <PanelSectionRow><ButtonItem layout="below" onClick={()=>{
+            const lang=cfg.language;
+            showModal(<FanCurveModal initial={curveFromConfig(cfg)} tr={(k:string,...a:Array<string|number>)=>translate(lang,k,...a)}
+              now={{t: f.current_temperature!=null ? safeNum(f.current_temperature,0) : null, s: null}}
+              onSave={async(pts:CurvePoint[])=>{
+                const obj:any={};
+                pts.forEach(p=>{obj[String(Math.round(p.t))]=Math.round(p.s);});
+                const res=await rpc('set_fan_curve',{curve:obj});
+                if (res && res.ok) { setCurveMsg(tr('curve.saved')); await refresh(); return {ok:true}; }
+                return {ok:false, error:(res&&res.error)||tr('search.unknown')};
+              }}/>);
+          }}>{tr('curve.edit')}</ButtonItem></PanelSectionRow>
           {curveMsg && <PanelSectionRow><span style={{color:'#dbeafe'}}>{curveMsg}</span></PanelSectionRow>}
         </>}
       </PanelSection>

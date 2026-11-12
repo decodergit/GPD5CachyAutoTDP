@@ -17,7 +17,7 @@ The project is provided as-is under the MIT License. Hardware-control operations
 - GPD WIN 5 with AMD Ryzen AI MAX+ 395 (Strix Halo), running CachyOS Handheld Edition.
 - Decky Loader.
 - **MangoHud / mangoapp** enabled in the system. The plugin reads FPS from its CSV log.
-- **PowerControl** installed before the first launch, so that its `ryzenadj` can be copied (see below).
+- No separate `ryzenadj` is needed: RyzenAdj v0.18.0 ships with the plugin in `bin/ryzenadj`.
 - Root privileges: the plugin runs with `flags: ["root"]`, because TDP and fan control require root on this hardware.
 
 ## Features
@@ -79,14 +79,11 @@ When the plugin is unloaded, all CPUs are switched back online, so no core is le
 
 ## Installation and first launch
 
-**PowerControl must be installed before the first launch of GPD5CachyAutoTDP.**
+RyzenAdj is bundled with the plugin (`bin/ryzenadj`, RyzenAdj v0.18.0), so PowerControl is no longer needed, not even for the first launch.
 
-1. Install PowerControl and make sure its `ryzenadj` executable is present.
-2. **Deactivate PowerControl before launching GPD5CachyAutoTDP.** Two TDP controllers must not run at the same time, because both can write the same power-control interface.
-3. Launch GPD5CachyAutoTDP once. During initialization it copies PowerControl's `ryzenadj` into its own `bin/` directory.
-4. After GPD5CachyAutoTDP has initialized and its local `bin/ryzenadj` exists, PowerControl may be removed.
+**Do not run PowerControl's TDP control at the same time as GPD5CachyAutoTDP.** Two TDP controllers must not run at once, because both write the same power-control interface. If PowerControl is installed, deactivate it or switch its TDP control off.
 
-PowerControl is therefore a **first-launch dependency**, not a permanent runtime dependency.
+If `bin/ryzenadj` is missing (for example, an old installation), the plugin still falls back to copying PowerControl's `ryzenadj` on first launch.
 
 ## MangoHud and FPS settings
 
@@ -100,7 +97,7 @@ On CachyOS Handheld, MangoHud is provided by gamescope and mangoapp for the whol
 
 The project source code is licensed under the **MIT License**. See [`LICENSE`](LICENSE).
 
-Third-party components keep their own licenses; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The repository does not distribute the RyzenAdj binary or the PowerControl plugin. When an existing RyzenAdj executable from PowerControl is found during first-launch initialization, it remains subject to its original LGPL-3.0-or-later license.
+Third-party components keep their own licenses; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The plugin includes the unmodified RyzenAdj v0.18.0 executable (`bin/ryzenadj`), which is licensed under LGPL-3.0-or-later, not MIT; its license texts are in `bin/licenses/` and its source is at https://github.com/FlyGoat/RyzenAdj/tree/v0.18.0. The repository does not distribute the PowerControl plugin.
 
 ## Building from source
 

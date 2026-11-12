@@ -25,7 +25,7 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "3.4.0",
+        "version": "3.5.0",
         "config_version": "3.0.0",
         "plugin_enabled": True,
         "enabled": False,

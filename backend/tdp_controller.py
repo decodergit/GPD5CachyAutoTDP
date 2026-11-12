@@ -18,7 +18,7 @@ class TDPController:
 
     Backend priority:
       1. AMD DPTC firmware-attributes (when kernel exposes it).
-      2. PowerControl's bundled ryzenadj (no AUR dependency).
+      2. ryzenadj shipped with the plugin (bin/ryzenadj), then PowerControl's copy.
       3. A system ryzenadj, if one is already installed.
 
     We never map EPP to TDP: EPP is a separate optional control.

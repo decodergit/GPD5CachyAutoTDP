@@ -179,6 +179,12 @@ def load_backend():
     here = Path(__file__).resolve().parent
     if str(here) not in sys.path:
         sys.path.insert(0, str(here))
+    ryzenadj = here / 'bin' / 'ryzenadj'
+    try:
+        if ryzenadj.is_file() and not os.access(ryzenadj, os.X_OK):
+            os.chmod(ryzenadj, 0o755)  # zip, распакованный Python'ом, теряет бит исполнения
+    except OSError:
+        pass
     try:
         from backend.tdp_controller import TDPController
     except Exception as e:  # noqa: BLE001

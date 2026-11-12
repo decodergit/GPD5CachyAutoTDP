@@ -92,6 +92,14 @@ var AutoTDP_Plugin = (function (React, ui) {
             'curve.saved': 'Curve saved',
             'curve.saveFail': 'Curve rejected: {0}',
             'curve.hint': 'Temperatures 20–110 °C, speed 0–100 %. Speed must not fall as temperature rises.',
+            'curve.edit': 'Edit curve',
+            'curve.graphHint': 'Drag a point to move it, tap empty space to add one. Speed cannot fall as temperature rises.',
+            'curve.prev': '◀ Point',
+            'curve.next': 'Point ▶',
+            'curve.selected': 'Point {0} of {1}: {2} °C → {3} %',
+            'curve.delete': 'Delete point',
+            'curve.cancel': 'Cancel',
+            'curve.now': 'now {0} °C · {1} %',
             'slider.interval': 'Poll interval',
             'slider.interval.desc': 'How often FPS is read and TDP may change. Shorter reacts faster but reads the log more often; 1 s is a good default.',
             'lang.title': 'Language',
@@ -193,6 +201,14 @@ var AutoTDP_Plugin = (function (React, ui) {
             'curve.saved': 'Кривая сохранена',
             'curve.saveFail': 'Кривая отклонена: {0}',
             'curve.hint': 'Температура 20–110 °C, скорость 0–100 %. Скорость не должна падать с ростом температуры.',
+            'curve.edit': 'Изменить кривую',
+            'curve.graphHint': 'Перетащите точку, чтобы сдвинуть её; коснитесь пустого места, чтобы добавить. Скорость не может падать с ростом температуры.',
+            'curve.prev': '◀ Точка',
+            'curve.next': 'Точка ▶',
+            'curve.selected': 'Точка {0} из {1}: {2} °C → {3} %',
+            'curve.delete': 'Удалить точку',
+            'curve.cancel': 'Отмена',
+            'curve.now': 'сейчас {0} °C · {1} %',
             'slider.interval': 'Интервал опроса',
             'slider.interval.desc': 'Как часто читается FPS и может меняться TDP. Меньше — быстрее реакция, но чаще чтение лога; 1 с — разумный выбор.',
             'lang.title': 'Язык',
@@ -215,6 +231,209 @@ var AutoTDP_Plugin = (function (React, ui) {
         const s = DICT[l][key] ?? DICT.en[key] ?? key;
         return format(s, args);
     };
+
+    // SPDX-License-Identifier: MIT
+    // Copyright (c) 2026 GPD5CachyAutoTDP Contributors
+    //
+    // Кривая вентилятора в виде графика (3.5.0): компактный график в панели и редактор
+    // в модальном окне. Точки перетаскиваются пальцем, касание пустого места добавляет точку;
+    // для геймпада есть переключение точек и ползунки выбранной точки.
+    // Границы совпадают с FanController.validate_curve.
+    const T_MIN = 20, T_MAX = 110, S_MIN = 0, S_MAX = 100;
+    // Совпадает с FanController.DEFAULT_CURVE.
+    const DEFAULT_CURVE = [
+        { t: 50, s: 20 }, { t: 60, s: 25 }, { t: 65, s: 30 }, { t: 70, s: 35 }, { t: 75, s: 42 },
+        { t: 80, s: 55 }, { t: 85, s: 70 }, { t: 90, s: 85 }, { t: 95, s: 100 },
+    ];
+    const ACCENT = '#1a9fff';
+    const NOW = '#ffb347';
+    const GRID = 'rgba(255,255,255,0.08)';
+    const LABEL = '#8b929a';
+    // --- геометрия --------------------------------------------------------------
+    const VB_W = 400;
+    const PAD = { l: 30, r: 16, t: 8, b: 20 };
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    function geometry(height) {
+        const pw = VB_W - PAD.l - PAD.r;
+        const ph = height - PAD.t - PAD.b;
+        return {
+            pw, ph,
+            x: (t) => PAD.l + (t - T_MIN) / (T_MAX - T_MIN) * pw,
+            y: (s) => PAD.t + (1 - (s - S_MIN) / (S_MAX - S_MIN)) * ph,
+            t: (px) => T_MIN + (px - PAD.l) / pw * (T_MAX - T_MIN),
+            s: (py) => S_MIN + (1 - (py - PAD.t) / ph) * (S_MAX - S_MIN),
+        };
+    }
+    // --- данные -------------------------------------------------------------------
+    /** Сортирует, склеивает одинаковые температуры (берёт бо́льшую скорость), делает кривую неубывающей. */
+    function normalizeCurve(pts) {
+        const byT = {};
+        pts.forEach(p => {
+            const t = Math.round(clamp(Number(p.t), T_MIN, T_MAX));
+            const s = Math.round(clamp(Number(p.s), S_MIN, S_MAX));
+            if (!Number.isFinite(t) || !Number.isFinite(s))
+                return;
+            byT[t] = byT[t] === undefined ? s : Math.max(byT[t], s);
+        });
+        const out = Object.keys(byT).map(k => ({ t: Number(k), s: byT[Number(k)] })).sort((a, b) => a.t - b.t);
+        for (let i = 1; i < out.length; i++)
+            out[i].s = Math.max(out[i].s, out[i - 1].s);
+        return out;
+    }
+    /** Скорость по кривой при температуре t (как FanController.calc). */
+    function curveAt(pts, t) {
+        if (!pts.length)
+            return S_MAX;
+        if (t <= pts[0].t)
+            return pts[0].s;
+        if (t >= pts[pts.length - 1].t)
+            return pts[pts.length - 1].s;
+        for (let i = 1; i < pts.length; i++) {
+            const a = pts[i - 1], b = pts[i];
+            if (t <= b.t)
+                return a.s + (t - a.t) * (b.s - a.s) / (b.t - a.t);
+        }
+        return pts[pts.length - 1].s;
+    }
+    /** Ставит точку i в (t, s): температура между соседями, скорость «толкает» соседей,
+     *  чтобы кривая оставалась неубывающей. */
+    function movePoint(pts, i, t, s) {
+        const out = pts.map(p => ({ ...p }));
+        const lo = i > 0 ? out[i - 1].t + 1 : T_MIN;
+        const hi = i < out.length - 1 ? out[i + 1].t - 1 : T_MAX;
+        out[i].t = Math.round(clamp(t, lo, hi));
+        out[i].s = Math.round(clamp(s, S_MIN, S_MAX));
+        for (let j = i + 1; j < out.length; j++)
+            out[j].s = Math.max(out[j].s, out[i].s);
+        for (let j = i - 1; j >= 0; j--)
+            out[j].s = Math.min(out[j].s, out[i].s);
+        return out;
+    }
+    function addPoint(pts, t, s) {
+        const tt = Math.round(clamp(t, T_MIN, T_MAX));
+        if (pts.some(p => p.t === tt))
+            return null;
+        const out = [...pts.map(p => ({ ...p })), { t: tt, s: 0 }].sort((a, b) => a.t - b.t);
+        const index = out.findIndex(p => p.t === tt);
+        return { pts: movePoint(out, index, tt, s), index };
+    }
+    function CurveGraph({ points, now, height, selected = null, svgRef, handlers }) {
+        const g = geometry(height);
+        const pts = points.length ? points : [{ t: T_MIN, s: S_MAX }];
+        const line = [
+            [g.x(T_MIN), g.y(pts[0].s)],
+            ...pts.map(p => [g.x(p.t), g.y(p.s)]),
+            [g.x(T_MAX), g.y(pts[pts.length - 1].s)],
+        ];
+        const lineStr = line.map(([a, b]) => `${a.toFixed(1)},${b.toFixed(1)}`).join(' ');
+        const area = `${g.x(T_MIN)},${g.y(0)} ${lineStr} ${g.x(T_MAX)},${g.y(0)}`;
+        const tTicks = [30, 50, 70, 90, 110];
+        const sTicks = [0, 25, 50, 75, 100];
+        const nowT = now && now.t != null ? clamp(now.t, T_MIN, T_MAX) : null;
+        const nowS = nowT == null ? null : (now && now.s != null ? clamp(now.s, S_MIN, S_MAX) : curveAt(pts, nowT));
+        const r = height > 160 ? 6 : 3.5;
+        return (React.createElement("svg", { ref: svgRef, viewBox: `0 0 ${VB_W} ${height}`, width: "100%", style: { display: 'block', touchAction: 'none', userSelect: 'none' }, ...handlers },
+            React.createElement("rect", { x: PAD.l, y: PAD.t, width: g.pw, height: g.ph, fill: "rgba(0,0,0,0.25)", rx: 3 }),
+            [20, 40, 60, 80, 100].map(t => React.createElement("line", { key: `gt${t}`, x1: g.x(t + 10), x2: g.x(t + 10), y1: PAD.t, y2: PAD.t + g.ph, stroke: GRID })),
+            sTicks.map(s => React.createElement("line", { key: `gs${s}`, x1: PAD.l, x2: PAD.l + g.pw, y1: g.y(s), y2: g.y(s), stroke: GRID })),
+            tTicks.map(t => React.createElement("text", { key: `lt${t}`, x: g.x(t), y: height - 5, fill: LABEL, fontSize: 11, textAnchor: "middle" },
+                t,
+                "\u00B0")),
+            sTicks.map(s => React.createElement("text", { key: `ls${s}`, x: PAD.l - 4, y: g.y(s) + 4, fill: LABEL, fontSize: 11, textAnchor: "end" },
+                s,
+                "%")),
+            React.createElement("polygon", { points: area, fill: "rgba(26,159,255,0.16)" }),
+            React.createElement("polyline", { points: lineStr, fill: "none", stroke: ACCENT, strokeWidth: 2.5, strokeLinejoin: "round" }),
+            nowT != null && React.createElement(React.Fragment, null,
+                React.createElement("line", { x1: g.x(nowT), x2: g.x(nowT), y1: PAD.t, y2: PAD.t + g.ph, stroke: NOW, strokeWidth: 1.5, strokeDasharray: "4 3" }),
+                React.createElement("circle", { cx: g.x(nowT), cy: g.y(nowS), r: r + 1, fill: NOW })),
+            points.map((p, i) => (React.createElement("circle", { key: i, cx: g.x(p.t), cy: g.y(p.s), r: i === selected ? r + 3 : r, fill: i === selected ? '#ffffff' : ACCENT, stroke: i === selected ? ACCENT : '#0e141b', strokeWidth: 2 })))));
+    }
+    const EDITOR_H = 250;
+    const HIT_RADIUS = 18; // в единицах viewBox: пальцу нужна зона больше самой точки
+    function FanCurveModal({ initial, now, tr, closeModal, onSave }) {
+        const [points, setPoints] = React.useState(() => {
+            const n = normalizeCurve(initial);
+            return n.length >= 2 ? n : DEFAULT_CURVE.map(p => ({ ...p }));
+        });
+        const [sel, setSel] = React.useState(0);
+        const [msg, setMsg] = React.useState('');
+        const [busy, setBusy] = React.useState(false);
+        const svgRef = React.useRef(null);
+        const drag = React.useRef(null);
+        const g = geometry(EDITOR_H);
+        const toView = (e) => {
+            const rect = svgRef.current.getBoundingClientRect();
+            return {
+                px: (e.clientX - rect.left) / rect.width * VB_W,
+                py: (e.clientY - rect.top) / rect.height * EDITOR_H,
+            };
+        };
+        const onPointerDown = (e) => {
+            const { px, py } = toView(e);
+            let best = -1, bestD = HIT_RADIUS;
+            points.forEach((p, i) => {
+                const d = Math.hypot(g.x(p.t) - px, g.y(p.s) - py);
+                if (d < bestD) {
+                    best = i;
+                    bestD = d;
+                }
+            });
+            if (best < 0) {
+                const added = addPoint(points, g.t(px), g.s(py));
+                if (!added)
+                    return;
+                setPoints(added.pts);
+                best = added.index;
+            }
+            setSel(best);
+            drag.current = best;
+            setMsg('');
+            try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+            }
+            catch { /* старый CEF */ }
+        };
+        const onPointerMove = (e) => {
+            if (drag.current == null)
+                return;
+            const { px, py } = toView(e);
+            const i = drag.current;
+            setPoints(prev => movePoint(prev, i, g.t(px), g.s(py)));
+        };
+        const endDrag = () => { drag.current = null; };
+        const cur = points[Math.min(sel, points.length - 1)];
+        const idx = Math.min(sel, points.length - 1);
+        const tLo = idx > 0 ? points[idx - 1].t + 1 : T_MIN;
+        const tHi = idx < points.length - 1 ? points[idx + 1].t - 1 : T_MAX;
+        const save = async () => {
+            setBusy(true);
+            const res = await onSave(normalizeCurve(points));
+            setBusy(false);
+            if (res && res.ok) {
+                closeModal && closeModal();
+                return;
+            }
+            setMsg(tr('curve.saveFail', (res && res.error) || '?'));
+        };
+        return (React.createElement(ui.ModalRoot, { closeModal: closeModal, onCancel: closeModal },
+            React.createElement("div", { style: { fontSize: 18, fontWeight: 'bold', marginBottom: 6 } }, tr('curve.title')),
+            React.createElement(CurveGraph, { points: points, now: now, height: EDITOR_H, selected: idx, svgRef: svgRef, handlers: { onPointerDown, onPointerMove, onPointerUp: endDrag, onPointerCancel: endDrag, onPointerLeave: endDrag } }),
+            React.createElement("div", { style: { fontSize: 12, color: LABEL, margin: '4px 0 8px' } }, tr('curve.graphHint')),
+            React.createElement(ui.Focusable, { style: { display: 'flex', gap: 8, alignItems: 'center' }, "flow-children": "horizontal" },
+                React.createElement(ui.DialogButton, { style: { minWidth: 0, flex: 1 }, disabled: idx <= 0, onClick: () => setSel(idx - 1) }, tr('curve.prev')),
+                React.createElement("div", { style: { flex: 2, textAlign: 'center', fontSize: 14 } }, tr('curve.selected', idx + 1, points.length, cur.t, cur.s)),
+                React.createElement(ui.DialogButton, { style: { minWidth: 0, flex: 1 }, disabled: idx >= points.length - 1, onClick: () => setSel(idx + 1) }, tr('curve.next'))),
+            React.createElement(ui.SliderField, { label: tr('curve.temp'), value: cur.t, min: tLo, max: Math.max(tLo, tHi), step: 1, showValue: true, onChange: (v) => setPoints(prev => movePoint(prev, idx, v, prev[idx].s)) }),
+            React.createElement(ui.SliderField, { label: tr('curve.speed'), value: cur.s, min: S_MIN, max: S_MAX, step: 1, showValue: true, onChange: (v) => setPoints(prev => movePoint(prev, idx, prev[idx].t, v)) }),
+            React.createElement(ui.Focusable, { style: { display: 'flex', gap: 8, marginTop: 10 }, "flow-children": "horizontal" },
+                React.createElement(ui.DialogButton, { style: { minWidth: 0, flex: 1 }, disabled: points.length <= 2, onClick: () => { setPoints(points.filter((_, i) => i !== idx)); setSel(Math.max(0, idx - 1)); } }, tr('curve.delete')),
+                React.createElement(ui.DialogButton, { style: { minWidth: 0, flex: 1 }, onClick: () => { setPoints(DEFAULT_CURVE.map(p => ({ ...p }))); setSel(0); setMsg(''); } }, tr('curve.reset'))),
+            React.createElement(ui.Focusable, { style: { display: 'flex', gap: 8, marginTop: 8 }, "flow-children": "horizontal" },
+                React.createElement(ui.DialogButton, { style: { minWidth: 0, flex: 1 }, disabled: busy, onClick: save }, tr('curve.save')),
+                React.createElement(ui.DialogButton, { style: { minWidth: 0, flex: 1 }, onClick: () => closeModal && closeModal() }, tr('curve.cancel'))),
+            msg && React.createElement("div", { style: { color: '#ffb3b3', marginTop: 8 } }, msg)));
+    }
 
     // SPDX-License-Identifier: MIT
     // Copyright (c) 2026 GPD5CachyAutoTDP Contributors
@@ -284,7 +503,6 @@ var AutoTDP_Plugin = (function (React, ui) {
             const [cfg, setCfg] = React.useState(null);
             const [stats, setStats] = React.useState(null);
             const [error, setError] = React.useState('');
-            const [curveEdit, setCurveEdit] = React.useState(null);
             const [curveMsg, setCurveMsg] = React.useState('');
             const tr = (key, ...args) => translate(cfg && cfg.language, key, ...args);
             const pendingTimers = React.useRef({});
@@ -396,7 +614,6 @@ var AutoTDP_Plugin = (function (React, ui) {
                 arr.sort((a, b) => a.t - b.t);
                 return arr.length ? arr : [{ t: 50, s: 20 }, { t: 95, s: 100 }];
             };
-            const updateCurvePoint = (list, i, key, v) => list.map((p, j) => j === i ? { ...p, [key]: v } : p);
             const target = safeNum(cfg.target_fps, 40);
             const minTdp = safeNum(cfg.min_tdp, 15);
             const maxTdp = Math.min(80, safeNum(cfg.max_tdp, 80));
@@ -464,42 +681,25 @@ var AutoTDP_Plugin = (function (React, ui) {
                             React.createElement("span", { style: { color: '#94a3b8' } }, tr('fan.notDetected'))),
                         f.available && React.createElement(React.Fragment, null,
                             React.createElement(ui.PanelSectionRow, null,
-                                React.createElement("span", { style: { color: '#dbeafe' } }, tr('curve.hint'))),
-                            (curveEdit || curveFromConfig(cfg)).map((pt, i) => (React.createElement(ui.PanelSectionRow, { key: `t${i}` },
-                                React.createElement(ui.SliderField, { label: `${tr('curve.point', i + 1)} — ${tr('curve.temp')}`, value: pt.t, min: 20, max: 110, step: 1, showValue: true, onChange: (v) => setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 't', v)) })))),
-                            (curveEdit || curveFromConfig(cfg)).map((pt, i) => (React.createElement(ui.PanelSectionRow, { key: `s${i}` },
-                                React.createElement(ui.SliderField, { label: `${tr('curve.point', i + 1)} — ${tr('curve.speed')}`, value: pt.s, min: 0, max: 100, step: 1, showValue: true, onChange: (v) => setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 's', v)) })))),
+                                React.createElement("div", { style: { width: '100%' } },
+                                    React.createElement(CurveGraph, { points: curveFromConfig(cfg), height: 150, now: { t: f.current_temperature != null ? safeNum(f.current_temperature, 0) : null,
+                                            s: f.pwm_percent?.length && f.pwm_percent[0] != null ? safeNum(f.pwm_percent[0], 0) : null } }),
+                                    f.current_temperature != null && React.createElement("div", { style: { fontSize: 12, color: '#ffb347', textAlign: 'right' } }, tr('curve.now', safeNum(f.current_temperature, 0).toFixed(0), f.pwm_percent?.length && f.pwm_percent[0] != null ? safeNum(f.pwm_percent[0], 0).toFixed(0) : '—')))),
                             React.createElement(ui.PanelSectionRow, null,
-                                React.createElement(ui.ButtonItem, { onClick: () => setCurveEdit([...(curveEdit || curveFromConfig(cfg)), { t: 100, s: 100 }]) }, tr('curve.add'))),
-                            React.createElement(ui.PanelSectionRow, null,
-                                React.createElement(ui.ButtonItem, { onClick: () => setCurveEdit((curveEdit || curveFromConfig(cfg)).slice(0, -1)) }, tr('curve.remove'))),
-                            React.createElement(ui.PanelSectionRow, null,
-                                React.createElement(ui.ButtonItem, { onClick: async () => {
-                                        const list = curveEdit || curveFromConfig(cfg);
-                                        // Склеиваем точки с одинаковой температурой, оставляя бо́льшую скорость:
-                                        // иначе бэкенд получит словарь с потерянными точками, а редактор покажет их заново.
-                                        const obj = {};
-                                        list.forEach((p) => {
-                                            const key = String(Math.round(p.t)), val = Math.round(p.s);
-                                            obj[key] = obj[key] === undefined ? val : Math.max(obj[key], val);
-                                        });
-                                        const res = await rpc('set_fan_curve', { curve: obj });
-                                        if (res && res.ok) {
-                                            setCurveMsg(tr('curve.saved'));
-                                            setCurveEdit(null);
-                                            await refresh();
-                                        }
-                                        else
-                                            setCurveMsg(tr('curve.saveFail', (res && res.error) || tr('search.unknown')));
-                                    } }, tr('curve.save'))),
-                            React.createElement(ui.PanelSectionRow, null,
-                                React.createElement(ui.ButtonItem, { onClick: async () => { const res = await rpc('reset_fan_curve'); if (res && res.ok) {
-                                        setCurveEdit(null);
-                                        setCurveMsg('');
-                                        await refresh();
-                                    }
-                                    else
-                                        setCurveMsg(tr('curve.saveFail', (res && res.error) || tr('search.unknown'))); } }, tr('curve.reset'))),
+                                React.createElement(ui.ButtonItem, { layout: "below", onClick: () => {
+                                        const lang = cfg.language;
+                                        ui.showModal(React.createElement(FanCurveModal, { initial: curveFromConfig(cfg), tr: (k, ...a) => translate(lang, k, ...a), now: { t: f.current_temperature != null ? safeNum(f.current_temperature, 0) : null, s: null }, onSave: async (pts) => {
+                                                const obj = {};
+                                                pts.forEach(p => { obj[String(Math.round(p.t))] = Math.round(p.s); });
+                                                const res = await rpc('set_fan_curve', { curve: obj });
+                                                if (res && res.ok) {
+                                                    setCurveMsg(tr('curve.saved'));
+                                                    await refresh();
+                                                    return { ok: true };
+                                                }
+                                                return { ok: false, error: (res && res.error) || tr('search.unknown') };
+                                            } }));
+                                    } }, tr('curve.edit'))),
                             curveMsg && React.createElement(ui.PanelSectionRow, null,
                                 React.createElement("span", { style: { color: '#dbeafe' } }, curveMsg)))),
                     React.createElement(ui.PanelSection, { title: tr('section.source') },

@@ -1,3 +1,11 @@
+## 3.5.0
+
+- **RyzenAdj ships with the plugin.** `bin/ryzenadj` (RyzenAdj v0.18.0, the same file PowerControl v3.15.1 ships) is now in the repository and in the Decky archive, so PowerControl is no longer needed, not even for the first launch. RyzenAdj stays under LGPL-3.0-or-later: the license texts are in `bin/licenses/`, the source link and checksum in `bin/README.txt` and `THIRD_PARTY_NOTICES.md`.
+- Decky unpacks archives with Python, which drops the executable bit. The plugin and `tdp_gui.py` now restore it on `bin/ryzenadj` at start. The archive stores `ryzenadj` as 755 and everything else as 644.
+- If `bin/ryzenadj` is missing (an old installation), the plugin still copies it from PowerControl.
+- **Fan curve as a graph.** The panel shows the curve as a chart (temperature 20–110 °C, speed 0–100 %) with a marker for the current temperature and fan speed. **Edit curve** opens an editor: drag a point to move it, tap empty space to add one; dragging up lifts the points to the right and dragging down lowers the points to the left, so the curve never decreases. A selected point can also be moved with sliders and the ◀/▶ buttons, so the editor works with a gamepad. Delete point, Reset to default, Save and Cancel are in the same window. Replaces the list of per-point sliders.
+- Build row shows 3.5.0.
+
 ## 3.4.0
 
 - **Fast return after menus.** A menu needs ~10 W, the location ~35 W: when the menu closed, FPS used to stay far below the target for 3–8 s while TDP climbed back. In simulation of the same switch the hard drop (FPS below goal − 4) is now 1–2 s instead of 7–8 s, with no overshoot.

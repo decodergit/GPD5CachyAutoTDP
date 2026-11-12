@@ -13,11 +13,13 @@ contributors.
 Upstream:
 https://github.com/FlyGoat/RyzenAdj
 
-The GPD5CachyAutoTDP source repository does **not** distribute the RyzenAdj
-binary. On first launch, the plugin may copy an existing `ryzenadj`
-executable supplied by the user's installed PowerControl installation into
-the plugin's local directory for subsequent use. That executable remains
-subject to its original license.
+Since 3.5.0 the repository and the plugin archive include the RyzenAdj
+v0.18.0 executable as `bin/ryzenadj` (the same file PowerControl v3.15.1
+ships). It is distributed unmodified under LGPL-3.0-or-later, separately from
+this project's MIT-licensed code. The license texts are in `bin/licenses/`
+(`RyzenAdj-LGPL-3.0.txt` and `GPL-3.0.txt`), and the corresponding source code is
+available at https://github.com/FlyGoat/RyzenAdj/tree/v0.18.0. The plugin only
+runs it as a separate program, and users may replace it with their own build.
 
 ## PowerControl
 
@@ -28,8 +30,9 @@ Upstream:
 https://github.com/mengmeet/PowerControl
 
 GPD5CachyAutoTDP does **not** redistribute the PowerControl plugin itself.
-It may use an existing `ryzenadj` executable supplied by a user's PowerControl
-installation during first-launch initialization.
+The bundled `bin/ryzenadj` was taken from PowerControl's distribution; it is
+RyzenAdj (see above), not PowerControl code. The fan curve graph is an
+independent implementation that follows the same idea as PowerControl's.
 
 ## Decky Loader
 

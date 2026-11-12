@@ -26,8 +26,14 @@ logger=logging.getLogger('autotdp')
 def _vendor_ryzenadj():
  try:
   local=Path(_PLUGIN_DIR)/'bin'/'ryzenadj'
+  # 3.5.0: ryzenadj входит в архив плагина. Decky распаковывает zip средствами Python,
+  # а они не сохраняют бит исполнения — возвращаем его сами.
+  if local.is_file() and not os.access(local,os.X_OK):
+   os.chmod(local,0o755)
+   logger.info('AutoTDP: restored executable bit on bundled ryzenadj')
   if local.is_file() and os.access(local,os.X_OK):
    return str(local)
+  # Запасной путь: файла нет (старая установка) — копируем из PowerControl.
   candidates=[
    Path(os.environ.get('DECKY_HOME','/home/deck/homebrew'))/'plugins/PowerControl/bin/ryzenadj',
    Path('/home/deck/homebrew/plugins/PowerControl/bin/ryzenadj'),
@@ -328,7 +334,7 @@ class Plugin:
   def _stats():
    r={'tdp':S.tdp.stats() if S.tdp else {'backend':'none'},
       'fan':S.fan.get_stats() if S.fan else {'available':False},
-      'epp_ok':S.epp is not None,'build':'3.4.0','init_errors':list(S.init_errors),
+      'epp_ok':S.epp is not None,'build':'3.5.0','init_errors':list(S.init_errors),
       'plugin_enabled':_master_enabled(),'active':S.active,'gui_pid':S.suspended_for}
    if S.epp: r.update(S.epp.get_current_stats())
    r['monitor']=S.monitor.get_stats() if S.monitor else {'state':'stopped'}

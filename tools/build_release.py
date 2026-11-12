@@ -6,8 +6,8 @@
     release/GPD5CachyAutoTDP-<версия>-decky.zip
 
 Внутри одна папка GPD5CachyAutoTDP/ с тем, что нужно плагину во время работы:
-main.py, plugin.json, package.json, dist/index.js, backend/*.py, bin/README.txt,
-tdp_gui.py и документы. Исходники интерфейса (src/), инструменты и конфиги сборки
+main.py, plugin.json, package.json, dist/index.js, backend/*.py, bin/ryzenadj с его
+лицензиями, tdp_gui.py, иконка и документы. Исходники интерфейса (src/), инструменты и конфиги сборки
 в архив не входят.
 
 Перед упаковкой dist/index.js пересобирается из src (npm run build), если не указан
@@ -33,7 +33,11 @@ TOP_FILES = [
     'README.md', 'README_RUS.md', 'CHANGELOG.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
     'SECURITY.md', '.gitignore', 'package.json', 'plugin.json', 'main.py', 'tdp_gui.py',
     'dist/index.js', 'bin/README.txt',
+    # RyzenAdj (LGPL-3.0) и тексты его лицензии: см. bin/README.txt.
+    'bin/ryzenadj', 'bin/licenses/RyzenAdj-LGPL-3.0.txt', 'bin/licenses/GPL-3.0.txt',
+    'assets/icon.svg',
 ]
+EXECUTABLES = {'bin/ryzenadj'}
 # Модули удалённых функций (2.3.0 и раньше): нигде не импортируются.
 BACKEND_SKIP = {'core_evacuation.py', 'cpu_topology.py', 'fps_tdp_model.py'}
 
@@ -99,7 +103,14 @@ def main():
     tmp = out.with_suffix('.zip.tmp')
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zf:
         for rel in files:
-            zf.write(ROOT / rel, f'{PLUGIN_DIR_NAME}/{rel}')
+            info = zipfile.ZipInfo.from_file(ROOT / rel, f'{PLUGIN_DIR_NAME}/{rel}')
+            info.compress_type = zipfile.ZIP_DEFLATED
+            # Права в архиве задаём явно: 755 для ryzenadj, 644 для остального,
+            # независимо от прав в рабочей копии. Плагин всё равно восстанавливает бит
+            # исполнения при старте: распаковка средствами Python его не сохраняет.
+            mode = 0o755 if rel in EXECUTABLES else 0o644
+            info.external_attr = (0o100000 | mode) << 16
+            zf.writestr(info, (ROOT / rel).read_bytes())
     tmp.replace(out)
     print(f'{out.relative_to(ROOT)}: {len(files)} файлов, {out.stat().st_size} байт')
 
