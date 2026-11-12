@@ -16,6 +16,7 @@ from typing import Any
 from .tdp_controller import TDPController
 from .fps_reader import FPSReader
 from .fps_hold_controller import FpsHoldController
+from .game_stats import DEFAULT_GAME, GameStats, detect_game, steam_game_name
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class TDPMonitorException(Exception):
 EFFECTIVE_OFFSET = 2
 LOAD_BOOST_STEP_W = 5.0
 LOAD_BOOST_INTERVAL_SEC = 1.5
+GAME_DETECT_SEC = 10.0
 
 
 class TDPMonitor:
@@ -55,6 +57,12 @@ class TDPMonitor:
         self.last_gpu_load = None
         self.last_tdp = None
         self.fps_ctl = FpsHoldController(min_w=self.min_tdp, max_w=self.max_tdp)
+        # Статистика по играм: рабочие уровни TDP для быстрого возврата после меню.
+        self.game_stats = GameStats(getattr(config_manager, 'settings_dir', None))
+        self.game = None
+        self.game_name = None
+        self._game_checked = -1e9
+        self.fps_ctl.on_level = self._save_levels
         self.tdp_hold_level = None
         self.tdp_decision = ''
         self._stats = {'adjustments_made': 0, 'errors': 0, 'last_error': None,
@@ -76,6 +84,8 @@ class TDPMonitor:
             self.target_fps = int(target_fps)
             self._sync_bounds()
             self.fps_ctl.reset()
+            self._game_checked = -1e9
+            self._update_game()
             cur = self.tdp.current_w
             if cur is None:
                 saved_tdp = self.cfg.get_value('last_tdp', None)
@@ -157,6 +167,33 @@ class TDPMonitor:
         self.fps_ctl.plateau_sec = max(3.0, interval * 3.0)
 
     # ------------------------------------------------------------------
+    # Игра и её статистика
+    # ------------------------------------------------------------------
+    def _update_game(self):
+        """Раз в GAME_DETECT_SEC определяет игру; при смене загружает её рабочие уровни."""
+        now = time.monotonic()
+        if now - self._game_checked < GAME_DETECT_SEC:
+            return
+        self._game_checked = now
+        try:
+            game = detect_game() or DEFAULT_GAME
+        except Exception as e:  # noqa: BLE001
+            logger.debug('game detection failed: %s', e)
+            game = DEFAULT_GAME
+        if game == self.game:
+            return
+        self.game = game
+        self.game_name = self.game_stats.name(game) or steam_game_name(game)
+        # Потолки и границы прошлой игры к новой не относятся.
+        self.fps_ctl.reset()
+        self.fps_ctl.set_levels(self.game_stats.levels(game))
+        logger.info('AutoTDP: game %s (%s), saved levels %s', game, self.game_name, self.fps_ctl.levels())
+
+    def _save_levels(self, levels):
+        if self.game:
+            self.game_stats.put_levels(self.game, levels, self.game_name)
+
+    # ------------------------------------------------------------------
     # Установка TDP
     # ------------------------------------------------------------------
     def _apply(self, new: float, load_boost: bool = False) -> bool:
@@ -186,6 +223,7 @@ class TDPMonitor:
         last_boost = 0.0
         while not self._stop.is_set():
             try:
+                self._update_game()
                 metrics = self.fps.read_metrics()
                 fps = metrics.get('fps')
                 cpu = metrics.get('cpu_load')
@@ -260,7 +298,10 @@ class TDPMonitor:
                 'tdp_hold_level': self.tdp_hold_level,
                 'tdp_decision': self.tdp_decision,
                 'tdp_search': self.fps_ctl.search_state(),
-                'tdp_search': self.fps_ctl.search_state(),
+                'game': self.game,
+                'game_name': self.game_name,
+                'game_levels': self.fps_ctl.levels(),
+                'recall_level': self.fps_ctl.recall_level(float(self.last_tdp)) if self.last_tdp is not None else None,
                 **self._stats,
                 'fps_source': self.fps.path and str(self.fps.path),
                 'waiting_seconds': (max(0.0, time.monotonic() - self._waiting_since)

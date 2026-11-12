@@ -193,6 +193,8 @@ function makeContent(serverAPI: ServerAPI) {
         <Row label={tr('row.tdpSource')} value={t.tdp_source==='setpoint' ? tr('row.tdpSource.setpoint') : (t.tdp_source || '—')}/>
         <Row label={tr('row.avgFps')} value={m.last_fps!=null ? safeNum(m.last_fps,0).toFixed(1) : '—'}/>
         <Row label={tr('row.effectiveGoal')} value={m.effective_target_fps!=null ? String(m.effective_target_fps) : '—'}/>
+        <Row label={tr('row.game')} value={m.game && m.game!=='default' ? (m.game_name || m.game) : tr('row.game.unknown')}/>
+        <Row label={tr('row.levels')} value={m.game_levels && m.game_levels.length ? Array.from(new Set(m.game_levels.slice(-8).map((v:any)=>Math.round(Number(v))))).sort((a:any,b:any)=>a-b).join(', ')+' W' : tr('row.levels.none')}/>
         <Row label={tr('row.tdpDecision')} value={m.tdp_hold_level!=null ? tr('row.tdpCapped', m.tdp_hold_level) : (m.tdp_decision || '—')}/>
         <Row label={tr('search.state')} value={tr('search.state.'+((m.tdp_search&&m.tdp_search.state)||'idle'))}/>
         <Row label={tr('search.good')} value={(m.tdp_search&&m.tdp_search.good_w)!=null?`${m.tdp_search.good_w} W`:tr('search.unknown')}/>

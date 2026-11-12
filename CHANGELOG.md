@@ -1,3 +1,14 @@
+## 3.4.0
+
+- **Fast return after menus.** A menu needs ~10 W, the location ~35 W: when the menu closed, FPS used to stay far below the target for 3–8 s while TDP climbed back. In simulation of the same switch the hard drop (FPS below goal − 4) is now 1–2 s instead of 7–8 s, with no overshoot.
+- **No smoothing lag on drops.** A sharp drop (latest reading below goal − 4 fps) is acted on at once, instead of waiting for the 4 s average. A mild deficit counts only readings taken after the last TDP change, so the controller no longer keeps raising after a jump on frames from the old level. Lowering still requires both the long average and the latest reading to show a surplus.
+- **Working levels per game.** TDP levels where FPS held near the target for 8 s are remembered and saved per game in `game_stats.json` (game detected from Steam's `SteamLaunch AppId=…` process; anything else shares one entry). On a sharp drop TDP jumps straight to the median remembered level above the current one, capped by an FPS-based estimate (FPS ∝ W^0.9, ×1.5) so a loading screen cannot send it to the maximum. The usual search then trims it down if the scene is lighter.
+- **Fixed:** once a plateau had been found, raises were limited to 2 W at every level, even far below that plateau. The small step now applies only near or above the learned ceiling.
+- **Fixed:** the raise interval was compared exactly, so timer jitter could skip every second poll. It now has a 10 % tolerance.
+- The FPS section shows the detected game and its working TDP levels.
+- `tools/simulate_scene_switch.py`: location → menu → location simulation on the real controller.
+- Build row shows 3.4.0.
+
 ## 3.3.0
 
 - **Plugin enabled switch** is now the first row of the plugin. When it is off, the plugin writes nothing: Auto TDP stops and the fan is handed back to the firmware. The other sections are hidden. The switch is saved as `plugin_enabled` and survives restarts.

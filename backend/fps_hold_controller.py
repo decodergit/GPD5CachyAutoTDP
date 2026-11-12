@@ -24,10 +24,22 @@
     и по истечении bounds_ttl_sec.
 
 Лучше больше, чем меньше: при неполных данных TDP не снижается.
+
+Быстрый возврат после лёгкой сцены (3.4.0):
+  * подъём решается по min(среднее за smooth_sec, последний замер), снижение — только если
+    избыток показывают оба. Длинное среднее после выхода из меню ещё 2-3 с «помнит» лёгкие
+    кадры и задерживает реакцию;
+  * рабочие уровни: TDP, на котором FPS стабильно держится около цели (STABLE_SEC), запоминается.
+    Уровни хранятся по игре (см. backend/game_stats.py);
+  * возврат: при резкой просадке (последний замер ниже goal - fail_fast_fps) и TDP заметно ниже
+    рабочего уровня TDP сразу ставится на медиану запомненных уровней выше текущего. Сверху
+    прыжок ограничен оценкой по закону FPS ~ W^0.9 с запасом RECALL_EST_MARGIN, чтобы не
+    улететь из-за кадров экрана загрузки. Дальше работает обычная логика: досылка шагами
+    или поиск минимума вниз.
 """
 
 from collections import deque
-from typing import Any, Deque, Dict, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 EFFECTIVE_OFFSET = 2
 
@@ -38,6 +50,21 @@ class FpsHoldController:
     # Выше выученного потолка поднимаемся редко: сцена могла стать тяжелее, но
     # частые пробы только жгли бы мощность.
     REPROBE_INTERVAL_SEC = 10.0
+    # Последний замер: окно, за которое считается «быстрый» FPS для решения о подъёме.
+    FAST_SEC = 1.0
+    # Рабочий уровень: FPS около цели при неизменном TDP столько секунд.
+    STABLE_SEC = 8.0
+    # Повторная запись того же уровня не чаще, чем раз в столько секунд.
+    LEVEL_REFRESH_SEC = 60.0
+    # Сколько рабочих уровней помнить на игру.
+    MAX_LEVELS = 16
+    # Возврат имеет смысл, если рабочий уровень выше текущего хотя бы на столько ватт.
+    RECALL_MIN_GAP_W = 4.0
+    # Не повторять возврат чаще.
+    RECALL_COOLDOWN_SEC = 6.0
+    # Оценка нужной мощности по FPS: W_need = W * (goal/fps)^(1/0.9), с запасом.
+    RECALL_EXPONENT = 1.0 / 0.9
+    RECALL_EST_MARGIN = 1.5
 
     def __init__(self, deadband: float = 2.0, smooth_sec: float = 4.0,
                  raise_interval_sec: float = 2.0, surplus_confirm_sec: float = 3.0,
@@ -74,6 +101,9 @@ class FpsHoldController:
         self.research_after_sec = float(research_after_sec)
         self._fps: Deque[Tuple[float, float]] = deque(maxlen=256)
         self.last_search_probes = 0
+        # Рабочие уровни текущей игры (переживают reset(): это статистика игры, а не сцены).
+        self._levels: List[float] = []
+        self.on_level: Optional[Callable[[List[float]], None]] = None
         self.reset()
 
     # --- состояние ------------------------------------------------------
@@ -86,6 +116,14 @@ class FpsHoldController:
         self._ceiling: Optional[Tuple[float, float]] = None        # (ceiling_w, until)
         self._learned_ceiling: Optional[float] = None              # потолок без срока действия
         self._fail_streak = 0                                     # провалов пробы плато подряд
+        self._stable_w: Optional[float] = None                     # TDP текущего устойчивого участка
+        self._stable_since = -1e9
+        self._level_recorded_t = -1e9
+        self._last_recall = -1e9
+        self._last_recall_w = 0.0
+        self._last_cur: Optional[float] = None
+        self._last_decide_t = -1e9
+        self._changed_t = -1e9                                     # когда TDP последний раз менялся
         self._reset_search()
         self.reason = ""
 
@@ -138,6 +176,98 @@ class FpsHoldController:
         if not vals:
             vals = [snapshot[-1][1]]
         return sum(vals) / len(vals)
+
+    def fast(self, now: float) -> Optional[float]:
+        """Среднее за последние FAST_SEC (без замеров до последнего изменения TDP):
+        реагирует на смену сцены без запаздывания."""
+        snapshot = list(self._fps)
+        if not snapshot:
+            return None
+        vals = [f for t, f in snapshot if now - t <= self.FAST_SEC and t > self._changed_t]
+        return sum(vals) / len(vals) if vals else snapshot[-1][1]
+
+    def fresh(self, now: float) -> Optional[float]:
+        """Среднее за smooth_sec только по замерам ПОСЛЕ последнего изменения TDP.
+
+        Замеры до изменения относятся к прежнему TDP: по ним после прыжка вверх
+        контроллер видел бы дефицит, которого уже нет, и перелетал бы рабочий уровень.
+        """
+        vals = [f for t, f in list(self._fps) if t > self._changed_t and now - t <= self.smooth_sec]
+        return sum(vals) / len(vals) if vals else None
+
+    # --- рабочие уровни -------------------------------------------------
+    def set_levels(self, levels) -> None:
+        """Загружает сохранённые уровни игры (старые первыми)."""
+        out = []
+        for v in levels or []:
+            try:
+                out.append(float(v))
+            except (TypeError, ValueError):
+                continue
+        self._levels = out[-self.MAX_LEVELS:]
+
+    def levels(self) -> List[float]:
+        return list(self._levels)
+
+    def _record_level(self, now: float, w: float) -> None:
+        w = float(round(w))
+        if w <= self.min_w + 0.5:
+            return  # пол диапазона ничего не говорит о потребности сцены
+        self._levels.append(w)
+        del self._levels[:-self.MAX_LEVELS]
+        self._level_recorded_t = now
+        if self.on_level is not None:
+            try:
+                self.on_level(list(self._levels))
+            except Exception:  # noqa: BLE001 - сохранение не должно ломать управление
+                pass
+
+    def _track_stable(self, now: float, cur_w: float, fps: float, fast: float, goal: float) -> None:
+        """Запоминает TDP, на котором FPS устойчиво держится около цели."""
+        near = (goal - self.deadband <= fps <= goal + self.deadband + 3.0
+                and goal - self.deadband - 1.0 <= fast)
+        if not near or self._search_probe is not None:
+            self._stable_w = None
+            return
+        if self._stable_w is None or abs(cur_w - self._stable_w) >= 0.5:
+            self._stable_w = cur_w
+            self._stable_since = now
+            return
+        if now - self._stable_since < self.STABLE_SEC:
+            return
+        last = self._levels[-1] if self._levels else None
+        if last is None or abs(last - cur_w) >= 1.0 or now - self._level_recorded_t >= self.LEVEL_REFRESH_SEC:
+            self._record_level(now, cur_w)
+
+    def recall_level(self, cur_w: float) -> Optional[float]:
+        """Типичный рабочий уровень выше текущего: медиана последних таких уровней."""
+        above = [w for w in self._levels[-8:] if w >= cur_w + self.RECALL_MIN_GAP_W]
+        if not above:
+            return None
+        above.sort()
+        n = len(above)
+        return above[n // 2] if n % 2 else (above[n // 2 - 1] + above[n // 2]) / 2.0
+
+    def _recall_target(self, now: float, cur_w: float, fast: float, goal: float,
+                       ceil: Optional[float]) -> Optional[float]:
+        """TDP для быстрого возврата или None, если возврат не нужен."""
+        if fast >= goal - self.fail_fast_fps:
+            return None
+        level = self.recall_level(cur_w)
+        if level is None:
+            return None
+        est = cur_w * (goal / max(1.0, fast)) ** self.RECALL_EXPONENT * self.RECALL_EST_MARGIN
+        target = min(level, est, self.max_w)
+        if ceil is not None:
+            target = min(target, ceil)
+        target = float(round(target))
+        if target < cur_w + self.RECALL_MIN_GAP_W:
+            return None
+        # Повтор возврата в пределах паузы — только если он выше прошлого: первый замер
+        # после выхода из меню смешанный, и первый прыжок по нему бывает коротким.
+        if now - self._last_recall < self.RECALL_COOLDOWN_SEC and target <= self._last_recall_w:
+            return None
+        return target
 
     # --- потолок плато ---------------------------------------------------
     def ceiling_now(self, now: float) -> Optional[float]:
@@ -209,7 +339,10 @@ class FpsHoldController:
             # Плато уже найдено однажды. Срок потолка истекает, чтобы не застрять навсегда,
             # но возвращаться к крупным шагам нельзя: выше выученного уровня это трата
             # мощности без прироста кадров, поэтому только маленькая проба.
-            cap = min(cap, self.REPROBE_STEP_W)
+            # Ниже выученного потолка шаг обычный: до него подъём ещё давал кадры
+            # (раньше 2 Вт действовали на любом уровне, и возврат из меню тянулся 15+ с).
+            room = float(self._learned_ceiling) - float(cur_w_for_step)
+            cap = min(cap, max(self.REPROBE_STEP_W, room))
         if self._probe is not None:
             # Пока окно проверки открыто, суммарный подъём ограничен raise_probe_frac
             # диапазона: иначе за одно окно можно уйти далеко вверх и не заметить плато.
@@ -283,11 +416,32 @@ class FpsHoldController:
                ceiling: Optional[float] = None) -> float:
         """Новое значение TDP (может совпадать с cur_w)."""
         self._goal_now = float(goal)
-        fps = self.smoothed(now)
-        if fps is None:
+        slow = self.smoothed(now)
+        if slow is None:
             self.reason = "нет данных FPS"
             self._surplus_since = None
             return cur_w
+        if self._last_cur is None or abs(cur_w - self._last_cur) >= 0.5:
+            # TDP изменился после прошлого решения: замеры с прошлого опроса уже новые.
+            self._changed_t = self._last_decide_t
+        self._last_cur = cur_w
+        self._last_decide_t = now
+        fast = self.fast(now)
+        fresh = self.fresh(now)
+        if fresh is None:
+            fresh = fast
+        # Асимметрия:
+        #  * резкий дефицит (последний замер ниже goal - fail_fast_fps) — сразу по нему,
+        #    длинное среднее после меню ещё 2-3 с «помнит» лёгкие кадры;
+        #  * мягкий дефицит — только если его показывают и последний замер, и среднее
+        #    после последнего изменения TDP (шум не поднимает, перелёта после прыжка нет);
+        #  * избыток — только если его показывают и длинное среднее, и последний замер.
+        if fast < goal - self.fail_fast_fps:
+            fps = fast
+        else:
+            fps = max(fresh, fast)
+        surplus_fps = min(slow, fast)
+        self._track_stable(now, cur_w, slow, fast, goal)
 
         # Границы поиска не живут вечно: условия в игре меняются.
         if self._good_w is not None and self._search_probe is None and now - self._bounds_t > self.bounds_ttl_sec:
@@ -329,9 +483,23 @@ class FpsHoldController:
                 self._reset_search()
                 self._bad_w = cur_w  # здесь кадров не хватает
                 self._bounds_t = now
+            recall = self._recall_target(now, cur_w, fast, goal, ceil)
+            if recall is not None:
+                self._last_recall = now
+                self._last_recall_w = recall
+                self._last_raise = now
+                # База пробы плато — новый уровень: следующие шаги получают полное окно,
+                # а сравнение «до/после» не выдаст ложное плато.
+                self._probe = (now, recall, fps)
+                self._stable_w = None
+                self.reason = (f"резкая просадка {fast:.0f} fps: возврат к рабочему уровню "
+                               f"{cur_w:g}->{recall:g} W")
+                return recall
             above_learned = self._learned_ceiling is not None and cur_w >= self._learned_ceiling - 0.5
             interval = self.REPROBE_INTERVAL_SEC if above_learned else self.raise_interval_sec
-            if now - self._last_raise < interval:
+            # Допуск 10 %: опрос раз в interval, и сравнение «ровно interval» из-за
+            # дрожания таймера пропускает каждый второй опрос.
+            if now - self._last_raise < interval * 0.9:
                 self.reason = f"дефицит {dev:+.1f}, ждём интервал подъёма"
                 return cur_w
             if ceil is not None and cur_w >= ceil:
@@ -357,7 +525,7 @@ class FpsHoldController:
             return new
 
         # 3. Избыток: поиск минимума делением отрезка.
-        if dev > self.deadband:
+        if surplus_fps - goal > self.deadband:
             if self._surplus_since is None:
                 self._surplus_since = now
             held = now - self._surplus_since
