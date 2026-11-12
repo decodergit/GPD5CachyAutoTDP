@@ -1,3 +1,21 @@
+## 3.2.2
+
+- `tdp_gui.py`: the limit is applied when the slider is released (mouse or arrow keys), not while dragging.
+- `tdp_gui.py`: the chosen limit is rewritten every 5 seconds, so a firmware or other tool reset is corrected. Nothing is written until a limit is chosen.
+- `tdp_gui.py`: the “Apply” and “Read from system” buttons are removed.
+- `tdp_gui.py`: if not started as root, it asks for the sudo password in a dialog, checks it with `sudo -S -v` (the password is passed on stdin, never on the command line), then restarts itself with `sudo -n env DISPLAY=… XAUTHORITY=…`.
+- `tdp_gui.py`: fan control. Modes “Auto (firmware)”, “Curve” (the backend fan curve) and “Manual” (0–100 % slider, rewritten every 5 seconds). The window shows temperature, fan speed and RPM. Closing the window hands the fan back to the firmware.
+- `tdp_gui.py`: fixed the layout: separators were placed on rows already used by labels and crossed the text. The window no longer crashes when no fan is found, and fan status no longer eats the first status line.
+- `tdp_gui.py`: settings (TDP limit, fan mode, manual fan speed) are saved to `~/.config/gpd5-tdp-gui.json` of the user who started the window and applied on the next start.
+- `tdp_gui.py`: the sudo password is asked only the first time and when the saved one stops working. It is kept in the system keyring (Secret Service via `secret-tool`), never in a file. Without `secret-tool` it is asked every time.
+- Build row shows 3.2.2.
+
+## 3.2.1
+
+- `tdp_gui.py` is part of the project and is included in both archives: a Tk desktop window with a live chip power indicator (from the powercap/RAPL energy counter, shown as “no data” when the counter is absent) and a 5–80 W limit slider. It lets you change the limit without switching to Big Picture. Turn Auto TDP off first, otherwise the plugin keeps rewriting the limit.
+- The Decky archive previously left the desktop tool out; it is now included.
+- Build row shows 3.2.1.
+
 ## 3.2.0
 
 - **Fixed fan curve editor layout.** Temperature and speed sliders for one point were placed in a single row, so the section looked like duplicated points. Now all temperature sliders come first, then all speed sliders, each point numbered once.

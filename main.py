@@ -248,7 +248,7 @@ class Plugin:
   def _stats():
    r={'tdp':S.tdp.stats() if S.tdp else {'backend':'none'},
       'fan':S.fan.get_stats() if S.fan else {'available':False},
-      'epp_ok':S.epp is not None,'build':'3.2.0','init_errors':list(S.init_errors)}
+      'epp_ok':S.epp is not None,'build':'3.2.2','init_errors':list(S.init_errors)}
    if S.epp: r.update(S.epp.get_current_stats())
    r['monitor']=S.monitor.get_stats() if S.monitor else {'state':'stopped'}
    return r

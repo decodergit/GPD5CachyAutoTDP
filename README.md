@@ -117,6 +117,10 @@ The backend is plain Python and needs no build step.
 
 The `tools/` directory has two scripts: `collect_metrics.py` records TDP, FPS, temperature and fan speed to a CSV while you play, and `analyze_metrics.py` reports how fast the TDP falls, how often it changes, and whether lowering the TDP causes FPS drops. Both only read the system. See `tools/README.md`.
 
+## Desktop power switch (tdp_gui.py)
+
+A small Tk window for changing the power limit from the desktop, without switching to Big Picture. Run it with `sudo python3 tdp_gui.py`. The slider sets the limit from 5 to 80 W through the same backend as the plugin. The limit is applied when you release the slider and rewritten every 5 seconds. If the script is not running as root, it asks for the sudo password in a dialog and restarts itself with sudo; the password is never put on the command line. The indicator shows the actual chip power, computed from the powercap/RAPL energy counter; if that counter is not present on the system, it shows “no data” instead of a made-up value. If Auto TDP is enabled in Decky, the plugin keeps rewriting the limit, so switch Auto TDP off first.
+
 ## Compatibility
 
 The frontend uses Decky's legacy IIFE format, for Decky Loader builds that evaluate `frontend_bundle` rather than loading ES modules.
