@@ -119,7 +119,9 @@ The `tools/` directory has two scripts: `collect_metrics.py` records TDP, FPS, t
 
 ## Desktop power switch (tdp_gui.py)
 
-A small Tk window for changing the power limit from the desktop, without switching to Big Picture. Run it with `sudo python3 tdp_gui.py`. The slider sets the limit from 5 to 80 W through the same backend as the plugin. The limit is applied when you release the slider and rewritten every 5 seconds. If the script is not running as root, it asks for the sudo password in a dialog and restarts itself with sudo; the password is never put on the command line. The indicator shows the actual chip power, computed from the powercap/RAPL energy counter; if that counter is not present on the system, it shows “no data” instead of a made-up value. If Auto TDP is enabled in Decky, the plugin keeps rewriting the limit, so switch Auto TDP off first.
+A small Tk window for changing the power limit from the desktop, without switching to Big Picture. Run it with `sudo python3 tdp_gui.py`. The slider sets the limit from 5 to 80 W through the same backend as the plugin. The limit is applied when you release the slider and rewritten every 5 seconds. If the script is not running as root, it asks for the sudo password in a dialog and restarts itself with sudo; the password is never put on the command line. The indicator shows the actual chip power, computed from the powercap/RAPL energy counter; if that counter is not present on the system, it shows “no data” instead of a made-up value. While the window is open, the Decky plugin is paused completely (Auto TDP and the fan curve stop); it resumes when the window is closed or if the window crashes. The window also controls the fan (firmware, curve or manual speed), remembers its settings, and keeps the sudo password in the system keyring.
+
+The first row of the plugin is a **Plugin enabled** switch. Turning it off stops everything the plugin writes: Auto TDP stops and the fan goes back to the firmware. The switch is saved and is not changed by `tdp_gui.py`.
 
 ## Compatibility
 

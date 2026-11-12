@@ -1,3 +1,12 @@
+## 3.3.0
+
+- **Plugin enabled switch** is now the first row of the plugin. When it is off, the plugin writes nothing: Auto TDP stops and the fan is handed back to the firmware. The other sections are hidden. The switch is saved as `plugin_enabled` and survives restarts.
+- **`tdp_gui.py` pauses the plugin while it is open.** The window writes its PID to `/run/gpd5cachyautotdp/gui.pid`; the plugin checks it every second, stops Auto TDP and the fan curve, and reports back in `plugin.json`. The window applies its own limit and fan mode only after that report (or after 8 s if the plugin does not answer). When the window closes, or crashes, the plugin resumes its saved state. A stale PID that does not belong to `tdp_gui.py` is ignored.
+- While paused or switched off, the plugin refuses `start_monitor`, `set_tdp`, `set_fan_speed` and `enable_fan_control`, and does not reset the TDP on unload.
+- **Plugin icon**: a chip with a lightning bolt instead of the ⚡ emoji. It follows the Decky theme colour (`currentColor`). The drawing is also in `assets/icon.svg`.
+- `tools/build_release.py` builds the Decky archive into `release/` (ignored by git): it checks that the versions match, rebuilds `dist/index.js` and packs the plugin folder.
+- Build row shows 3.3.0.
+
 ## 3.2.2
 
 - `tdp_gui.py`: the limit is applied when the slider is released (mouse or arrow keys), not while dragging.

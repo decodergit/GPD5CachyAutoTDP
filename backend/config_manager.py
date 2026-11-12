@@ -25,8 +25,9 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "3.2.2",
+        "version": "3.3.0",
         "config_version": "3.0.0",
+        "plugin_enabled": True,
         "enabled": False,
         "target_fps": 40,
         "min_tdp": 15,
@@ -209,6 +210,7 @@ class ConfigManager:
 
     # Схема ключей, которые можно менять через RPC: (тип, минимум, максимум). None — без ограничения.
     VALUE_SCHEMA: Dict[str, Tuple[type, Any, Any]] = {
+        "plugin_enabled": (bool, None, None),
         "enabled": (bool, None, None),
         "target_fps": (int, 1, 120),
         "min_tdp": (float, 5.0, 80.0),

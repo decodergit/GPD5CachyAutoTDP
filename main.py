@@ -49,6 +49,7 @@ from backend.monitor import TDPMonitor, TDPMonitorException
 from backend.cpu_online import restore_all_cpus
 from backend.fan_controller import FanController, FanControllerException
 from backend.mangohud_controller import MangoHudController
+from backend import gui_lock
 try:
  from backend.epp_controller import EPPController, EPPNotAvailableException
 except Exception: EPPController=None
@@ -63,6 +64,12 @@ class _State: pass
 S=_State()
 S.cfg=None; S.tdp=None; S.fan=None; S.mangohud=None; S.epp=None
 S.monitor=None; S.watchdog_task=None; S.init_errors=[]
+# Полное отключение (3.3.0): плагин активен, только если включён общий переключатель
+# plugin_enabled И окно tdp_gui.py не держит блокировку. Неактивный плагин не пишет
+# ни TDP, ни вентилятор: монитор остановлен, вентилятор отдан прошивке.
+S.active=False; S.suspended_for=None; S.gui_task=None
+S.state_lock=asyncio.Lock()
+GUI_POLL_S=1.0
 
 WATCHDOG_TIMEOUT_S=10.0
 WATCHDOG_COOLDOWN_S=30.0
@@ -93,6 +100,7 @@ async def _stop_runtime():
   except Exception: logger.exception("AutoTDP: fan cleanup failed during restart")
  for attr in ('monitor','fan','tdp','mangohud','epp','cfg'):
   setattr(S, attr, None)
+ S.active=False
 
 async def _initialize():
  logger.info("AutoTDP: initialization start")
@@ -131,6 +139,25 @@ async def _initialize():
   S.monitor=TDPMonitor(S.tdp,S.cfg,S.fan); logger.info("AutoTDP: monitor ready")
  except Exception as e:
   ok=False; S.init_errors.append(f"monitor: {e}"); logger.exception("AutoTDP: monitor initialization failed: %s", e)
+ want,gui=_want_active()
+ if want: _start_services()
+ else: logger.info("AutoTDP: not starting services (plugin_enabled=%s, tdp_gui pid=%s)", _master_enabled(), gui)
+ S.active=want; S.suspended_for=None if want else gui
+ gui_lock.write_plugin_state(S.active,S.suspended_for)
+ logger.info("AutoTDP: initialization complete ok=%s active=%s", ok, S.active)
+ return ok
+
+def _master_enabled():
+ try: return bool(S.cfg.get_value('plugin_enabled',True)) if S.cfg else True
+ except Exception: return True
+
+def _want_active():
+ """(должен ли плагин работать, PID окна tdp_gui.py или None)."""
+ gui=gui_lock.holder()
+ return _master_enabled() and gui is None, gui
+
+def _start_services():
+ """Восстанавливает кривую вентилятора и AutoTDP по сохранённому конфигу."""
  try:
   if S.cfg and S.fan:
    fc=S.cfg.get_value('fan_control',{})
@@ -146,16 +173,49 @@ async def _initialize():
    S.monitor.start(S.cfg.get_value('min_tdp',15),S.cfg.get_value('max_tdp',80),S.cfg.get_value('target_fps',40),S.cfg.get_value('initial_tdp',35))
    logger.info("AutoTDP: restored running state")
  except Exception as e: logger.exception("Saved AutoTDP start failed: %s", e)
- logger.info("AutoTDP: initialization complete ok=%s", ok)
- return ok
+
+def _stop_services():
+ """Останавливает всё, что пишет в систему. Конфиг (enabled, fan_control) не меняется."""
+ if S.monitor:
+  try: S.monitor.stop(reset_to_initial=False)
+  except Exception: logger.exception("AutoTDP: monitor stop failed")
+ if S.fan:
+  try: S.fan.disable()
+  except Exception: logger.exception("AutoTDP: fan release failed")
+
+async def _sync_active():
+ """Приводит состояние к нужному: общий переключатель и окно tdp_gui.py."""
+ async with S.state_lock:
+  want,gui=_want_active()
+  if want!=S.active:
+   if want:
+    await asyncio.to_thread(_start_services)
+    logger.info("AutoTDP: resumed")
+   else:
+    await asyncio.to_thread(_stop_services)
+    logger.info("AutoTDP: stopped (plugin_enabled=%s, tdp_gui pid=%s)", _master_enabled(), gui)
+   S.active=want
+  S.suspended_for=None if want else gui
+  gui_lock.write_plugin_state(S.active,S.suspended_for)
+
+async def _gui_watch():
+ while True:
+  try:
+   if S.cfg is not None: await _sync_active()
+  except asyncio.CancelledError:
+   raise
+  except Exception:
+   logger.exception("AutoTDP: gui watch error")
+  await asyncio.sleep(GUI_POLL_S)
 
 async def _reinitialize(reason='watchdog'):
  logger.warning("AutoTDP: restarting plugin initialization: %s", reason)
- try:
-  await _stop_runtime()
- finally:
-  await asyncio.sleep(0.5)
- return await _initialize()
+ async with S.state_lock:
+  try:
+   await _stop_runtime()
+  finally:
+   await asyncio.sleep(0.5)
+  return await _initialize()
 
 async def _startup_watchdog():
  logger.info("AutoTDP: startup watchdog enabled (waiting timeout=%.0fs)", WATCHDOG_TIMEOUT_S)
@@ -164,7 +224,7 @@ async def _startup_watchdog():
   await asyncio.sleep(2.0)
   try:
    monitor=S.monitor
-   if not monitor:
+   if not monitor or not S.active:
     continue
    stats=monitor.get_stats()
    waiting_for=float(stats.get('waiting_seconds') or 0.0)
@@ -190,20 +250,32 @@ class Plugin:
   logger.info("AutoTDP: _main start")
   S.watchdog_task=asyncio.create_task(_startup_watchdog())
   S.watchdog_task.add_done_callback(_watchdog_done)
-  return await _initialize()
+  ok=await _initialize()
+  S.gui_task=asyncio.create_task(_gui_watch())
+  S.gui_task.add_done_callback(_watchdog_done)
+  return ok
 
  async def _unload(self):
   try:
-   task=S.watchdog_task
-   if task:
-    task.cancel()
-    try: await task
-    except asyncio.CancelledError: pass
-   if S.monitor: S.monitor.stop()
-   if S.fan: S.fan.disable()
+   for task in (S.watchdog_task,S.gui_task):
+    if task:
+     task.cancel()
+     try: await task
+     except asyncio.CancelledError: pass
   except Exception: logger.exception("Unload failed")
+  # Неактивный плагин (выключен или приостановлен окном tdp_gui.py) при выгрузке
+  # ничего не пишет: иначе сброс TDP перебил бы лимит, выставленный окном.
+  if S.active:
+   if S.monitor:
+    try: S.monitor.stop()
+    except Exception: logger.exception("Unload: monitor stop failed")
+   if S.fan:
+    try: S.fan.disable()
+    except Exception: logger.exception("Unload: fan release failed")
+   S.active=False
   try: restore_all_cpus()
   except Exception: logger.exception("Restoring CPUs on unload failed")
+  gui_lock.clear_plugin_state()
 
  # ---- конфигурация ----------------------------------------------------
  async def get_config(self):
@@ -230,6 +302,14 @@ class Plugin:
   if language not in ('en','ru'): return False
   return bool(await asyncio.to_thread(S.cfg.set_value,'language',language))
 
+ @_safe(False, 'set_plugin_enabled')
+ async def set_plugin_enabled(self,enabled):
+  """Общий переключатель. Выключенный плагин не трогает TDP и вентилятор."""
+  if S.cfg is None: return False
+  await asyncio.to_thread(S.cfg.set_value,'plugin_enabled',bool(enabled))
+  await _sync_active()
+  return True
+
  @_safe(False, 'reset_config')
  async def reset_config(self):
   if S.cfg is None: return False
@@ -248,7 +328,8 @@ class Plugin:
   def _stats():
    r={'tdp':S.tdp.stats() if S.tdp else {'backend':'none'},
       'fan':S.fan.get_stats() if S.fan else {'available':False},
-      'epp_ok':S.epp is not None,'build':'3.2.2','init_errors':list(S.init_errors)}
+      'epp_ok':S.epp is not None,'build':'3.3.0','init_errors':list(S.init_errors),
+      'plugin_enabled':_master_enabled(),'active':S.active,'gui_pid':S.suspended_for}
    if S.epp: r.update(S.epp.get_current_stats())
    r['monitor']=S.monitor.get_stats() if S.monitor else {'state':'stopped'}
    return r
@@ -257,6 +338,7 @@ class Plugin:
  # ---- AutoTDP ---------------------------------------------------------
  @_safe(False, 'start_monitor')
  async def start_monitor(self,min_tdp=15,max_tdp=80,target_fps=40,enable_auto=True):
+  if not S.active: return False
   if S.monitor is None or S.cfg is None: return False
   initial=await asyncio.to_thread(S.cfg.get_value,'initial_tdp',35)
   ok=await asyncio.to_thread(S.monitor.start,min_tdp,max_tdp,target_fps,initial)
@@ -294,6 +376,7 @@ class Plugin:
 
  @_safe(False, 'set_tdp')
  async def set_tdp(self,value):
+  if not S.active: return False
   v=float(value)
   ok=await asyncio.to_thread(S.tdp.set_tdp,v)
   if ok and S.cfg: await asyncio.to_thread(S.cfg.set_value,'last_tdp',v)
@@ -317,6 +400,7 @@ class Plugin:
  # ---- вентилятор ------------------------------------------------------
  @_safe(False, 'set_fan_speed')
  async def set_fan_speed(self,speed):
+  if not S.active: return False
   return await asyncio.to_thread(S.fan.set_fan_speed,int(speed))
 
  @_safe(list, 'get_fan_curve')
@@ -341,6 +425,7 @@ class Plugin:
 
  @_safe(False, 'enable_fan_control')
  async def enable_fan_control(self):
+  if not S.active: return False
   ok=await asyncio.to_thread(S.fan.enable)
   if S.cfg: await asyncio.to_thread(S.cfg.set_value,'fan_control.enabled',ok)
   return ok

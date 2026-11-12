@@ -15,6 +15,10 @@
   * Настройки (лимит TDP, режим и ручная скорость вентилятора) сохраняются в
     ~/.config/gpd5-tdp-gui.json пользователя, запустившего окно, и применяются
     при следующем запуске.
+  * Плагин Decky на время работы окна полностью приостанавливается: окно пишет свой PID
+    в /run/gpd5cachyautotdp/gui.pid, плагин останавливает AutoTDP и кривую вентилятора и
+    отвечает в plugin.json. Пока плагин не ответил (до 8 с), окно ничего не пишет.
+    При закрытии окна (или его падении) плагин возвращается в прежнее состояние.
   * Права администратора: если скрипт запущен не от root, он перезапускает себя через sudo.
     Пароль sudo спрашивается в диалоге только в первый раз и когда сохранённый не подошёл.
     Он хранится в системном хранилище паролей (Secret Service: KDE Wallet / GNOME Keyring)
@@ -26,10 +30,12 @@
     python3 tdp_gui.py
 """
 
+import atexit
 import json
 import os
 import pwd
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -43,6 +49,8 @@ POLL_MS = 1000
 REAPPLY_MS = 5000
 ELEVATED_FLAG = '--elevated'
 POWERCAP_ROOTS = [Path('/sys/class/powercap')]
+PLUGIN_WAIT_MS = 8000      # сколько ждать, пока плагин Decky остановится
+PLUGIN_POLL_MS = 250
 
 # ---------------------------------------------------------------- настройки
 
@@ -406,6 +414,18 @@ def load_fan_controller():
     return fan, ''
 
 
+def load_gui_lock():
+    """Модуль backend.gui_lock или None."""
+    here = Path(__file__).resolve().parent
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
+    try:
+        from backend import gui_lock
+    except Exception:  # noqa: BLE001
+        return None
+    return gui_lock
+
+
 class FanKeeper:
     """Режим вентилятора: прошивка, кривая из backend или ручная скорость.
 
@@ -507,16 +527,76 @@ class App(tk.Tk):
         self.fan_now_var = tk.StringVar(value='—')
         self.fan_status_var = tk.StringVar(value='')
 
+        self.ready = False          # True, когда плагин Decky отпустил TDP и вентилятор
+        self.plugin_note = 'Ожидание остановки плагина Decky…'
+        self._controls = []
+        self._closed = False
+
         self._build()
         self._read_initial_limit()
-        self._restore_settings()
+        self._set_controls_enabled(False)
         self._update_status()
         self._update_fan_status()
         self._tick()
         if self.fan:
             self._tick_fan()
-        self.after(REAPPLY_MS, self._reapply)
         self.protocol('WM_DELETE_WINDOW', self._on_close)
+        self._suspend_plugin()
+
+    # --- плагин Decky
+    def _suspend_plugin(self):
+        self.gui_lock = load_gui_lock()
+        if self.gui_lock is None:
+            self.plugin_note = 'Модуль связи с плагином не найден: плагин Decky не приостановлен.'
+            self._become_ready()
+            return
+        try:
+            self.gui_lock.acquire()
+        except OSError as e:
+            self.plugin_note = f'Не удалось приостановить плагин Decky: {e}'
+            self._become_ready()
+            return
+        atexit.register(self._release_plugin)
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(sig, lambda *_: self.after(0, self._on_close))
+        self._wait_started = time.monotonic()
+        self._wait_plugin()
+
+    def _wait_plugin(self):
+        st = self.gui_lock.plugin_state()
+        if st is None:
+            self.plugin_note = 'Плагин Decky не запущен.'
+        elif not st.get('active', True):
+            self.plugin_note = 'Плагин Decky приостановлен, пока открыто окно.'
+        elif (time.monotonic() - self._wait_started) * 1000 < PLUGIN_WAIT_MS:
+            self.after(PLUGIN_POLL_MS, self._wait_plugin)
+            return
+        else:
+            self.plugin_note = ('Плагин Decky не остановился за '
+                                f'{PLUGIN_WAIT_MS // 1000} с: возможен конфликт. '
+                                'Обновите плагин или выключите его вручную.')
+        self._become_ready()
+
+    def _become_ready(self):
+        self.ready = True
+        self._set_controls_enabled(True)
+        self._restore_settings()
+        self._update_status()
+        self._update_fan_status()
+        self.after(REAPPLY_MS, self._reapply)
+
+    def _release_plugin(self):
+        gl = getattr(self, 'gui_lock', None)
+        if gl is not None:
+            gl.release()
+
+    def _set_controls_enabled(self, on):
+        state = 'normal' if on else 'disabled'
+        self.slider.configure(state=state)
+        for w in self._controls:
+            w.state(['!disabled'] if on else ['disabled'])
+        if self.fan:
+            self._sync_fan_slider_state()
 
     def _build(self):
         pad = {'padx': 14, 'pady': 6}
@@ -563,8 +643,10 @@ class App(tk.Tk):
             place(ttk.Label(frame, textvariable=self.fan_now_var, font=('TkDefaultFont', 16, 'bold')))
             modes = ttk.Frame(frame)
             for i, (key, title) in enumerate(FAN_MODES):
-                ttk.Radiobutton(modes, text=title, value=key, variable=self.fan_mode_var,
-                                command=self._on_fan_mode).grid(row=0, column=i, padx=(0, 12))
+                rb = ttk.Radiobutton(modes, text=title, value=key, variable=self.fan_mode_var,
+                                     command=self._on_fan_mode)
+                rb.grid(row=0, column=i, padx=(0, 12))
+                self._controls.append(rb)
             place(modes)
             self.fan_slider = place(tk.Scale(frame, from_=0, to=100, orient='horizontal', length=320,
                                              variable=self.fan_pct_var, showvalue=False,
@@ -638,6 +720,8 @@ class App(tk.Tk):
         self.limit_text_var.set(f'{int(float(value))} Вт')
 
     def _on_release(self, _event=None):
+        if not self.ready:
+            return
         self.keeper.set_target(self.limit_var.get())
         self._update_status()
         self._save_settings()
@@ -668,8 +752,7 @@ class App(tk.Tk):
             lines.append('Счётчик энергии (powercap/RAPL) не найден: мощность не измеряется.')
         else:
             lines.append('Измерение мощности работает.')
-        lines.append('Если Auto TDP или кривая вентилятора включены в Decky, плагин тоже пишет '
-                     'значения: выключите их.')
+        lines.append(self.plugin_note)
         self.status_var.set('\n'.join(lines))
 
     def _tick(self):
@@ -684,8 +767,8 @@ class App(tk.Tk):
 
     # --- вентилятор
     def _sync_fan_slider_state(self):
-        state = 'normal' if self.fan_mode_var.get() == 'manual' else 'disabled'
-        self.fan_slider.configure(state=state)
+        on = self.ready and self.fan_mode_var.get() == 'manual'
+        self.fan_slider.configure(state='normal' if on else 'disabled')
 
     def _on_fan_mode(self):
         self.fan.set_mode(self.fan_mode_var.get())
@@ -697,7 +780,7 @@ class App(tk.Tk):
         self.fan_pct_text_var.set(f'{int(float(value))} %')
 
     def _on_fan_release(self, _event=None):
-        if self.fan_mode_var.get() != 'manual':
+        if not self.ready or self.fan_mode_var.get() != 'manual':
             return
         self.fan.set_manual(self.fan_pct_var.get())
         self._update_fan_status()
@@ -731,9 +814,16 @@ class App(tk.Tk):
         self.after(POLL_MS, self._tick_fan)
 
     def _on_close(self):
-        self._save_settings()
+        if self._closed:
+            return
+        self._closed = True
+        if self.ready:
+            self._save_settings()
         if self.fan:
             self.fan.release()
+        # Блокировку снимаем последней: плагин включит свою кривую уже после
+        # того, как окно вернуло вентилятор прошивке.
+        self._release_plugin()
         self.destroy()
 
 # ---------------------------------------------------------------- main

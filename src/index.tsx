@@ -7,7 +7,7 @@ import { translate } from './i18n';
 type ServerAPI = { callPluginMethod: (method: string, args?: Record<string, unknown>) => Promise<any> };
 
 const DEFAULT_CONFIG = {
-  enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false, language: 'en',
+  plugin_enabled: true, enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false, language: 'en',
   check_interval_sec: 3, hysteresis_threshold: 5,
   fan_control: { enabled: true },
 };
@@ -132,6 +132,20 @@ function makeContent(serverAPI: ServerAPI) {
       await refresh();
     };
 
+    const pluginEnabled = cfg.plugin_enabled !== false;
+    // active приходит из get_stats: false, если плагин выключен или приостановлен окном tdp_gui.py.
+    const pluginActive = stats ? stats.active !== false : pluginEnabled;
+    const guiPid = stats && stats.gui_pid;
+    const togglePlugin = async (value:boolean) => {
+      setCfg((x:any)=>({...x,plugin_enabled:value}));
+      const ok = await rpc('set_plugin_enabled',{enabled:value});
+      if (!ok) setError(tr('err.plugin'));
+      await refresh();
+    };
+    const pluginDesc = !pluginEnabled ? tr('toggle.plugin.off')
+      : guiPid ? tr('toggle.plugin.gui', guiPid)
+      : tr('toggle.plugin.on');
+
     const t=(stats&&stats.tdp)||{};
     const m=(stats&&stats.monitor)||{};
     const f=(stats&&stats.fan)||{};
@@ -157,15 +171,21 @@ function makeContent(serverAPI: ServerAPI) {
     const initialTdp=safeNum(cfg.initial_tdp,35);
 
     return <>
-      <PanelSection title={tr('section.autotdp')}>
+      <PanelSection title={tr('section.plugin')}>
+        <PanelSectionRow>
+          <ToggleField label={tr('toggle.plugin')} description={pluginDesc} checked={pluginEnabled} onChange={togglePlugin}/>
+        </PanelSectionRow>
+      </PanelSection>
+      {pluginActive && <PanelSection title={tr('section.autotdp')}>
         <PanelSectionRow>
           <ToggleField label={tr('toggle.autotdp')} description={enabled?tr('toggle.running'):tr('toggle.stopped')} checked={enabled} onChange={toggle}/>
         </PanelSectionRow>
-      </PanelSection>
+      </PanelSection>}
             {(error || (stats&&stats.init_errors&&stats.init_errors.length)) && <PanelSection title={tr('section.status')}>
         {error && <PanelSectionRow><span style={{color:'#ffb3b3'}}>{error}</span></PanelSectionRow>}
         {stats&&stats.init_errors&&stats.init_errors.map((e:any,i:number)=><PanelSectionRow key={i}><span style={{color:'#ffb3b3'}}>{tr('init.title')}: {String(e)}</span></PanelSectionRow>)}
       </PanelSection>}
+      {pluginActive && <>
       <PanelSection title={tr('section.fps')}>
         <Row label={tr('row.build')} value={(stats&&stats.build) || tr('row.build.old')}/>
         <Row label={tr('row.tdpBackend')} value={t.backend || 'none'}/>
@@ -239,6 +259,7 @@ function makeContent(serverAPI: ServerAPI) {
           <ToggleField label={tr('src.hud')} description={cfg.mangohud_display?tr('src.hud.on'):tr('src.hud.off')} checked={!!cfg.mangohud_display} onChange={async(v:boolean)=>{const ok=await rpc('set_mangohud_display',{enabled:v});if(ok) await refresh();}}/>
         </PanelSectionRow>
       </PanelSection>
+      </>}
 
       <PanelSection title={tr('lang.title')}>
         <PanelSectionRow>
@@ -252,12 +273,24 @@ function makeContent(serverAPI: ServerAPI) {
   };
 }
 
+// Иконка плагина: микросхема с молнией (управление мощностью чипа).
+// Цвет — currentColor, поэтому значок подсвечивается вместе с остальными в меню Decky.
+// Тот же рисунок лежит в assets/icon.svg.
+const PluginIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1em" height="1em" fill="none"
+    stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="4.5" y="4.5" width="15" height="15" rx="2.8"/>
+    <path d="M9.5 1.8v2.7M14.5 1.8v2.7M9.5 19.5v2.7M14.5 19.5v2.7M1.8 9.5h2.7M1.8 14.5h2.7M19.5 9.5h2.7M19.5 14.5h2.7"/>
+    <path d="M13.7 6.6 8.3 13h3.6l-1.6 4.4L15.7 11h-3.6z" fill="currentColor" stroke="none"/>
+  </svg>
+);
+
 export default function createPlugin(serverAPI: ServerAPI) {
   const Content=makeContent(serverAPI);
   return {
     title:<div className={staticClasses?.Title || ''}>GPD5CachyAutoTDP</div>,
     content:<Content/>,
-    icon:<span>⚡</span>,
+    icon:<PluginIcon/>,
     onDismount(){}
   };
 }

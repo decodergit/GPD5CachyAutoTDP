@@ -14,6 +14,12 @@ var AutoTDP_Plugin = (function (React, ui) {
             'toggle.autotdp': 'Auto TDP',
             'toggle.running': 'Running',
             'toggle.stopped': 'Stopped',
+            'section.plugin': 'Plugin',
+            'toggle.plugin': 'Plugin enabled',
+            'toggle.plugin.on': 'Controls TDP and fan',
+            'toggle.plugin.off': 'Fully off: TDP and fan are not touched',
+            'toggle.plugin.gui': 'Paused: the tdp_gui.py window is open (pid {0})',
+            'err.plugin': 'Could not switch the plugin',
             'row.build': 'Build',
             'row.build.old': 'old backend: reinstall the archive',
             'row.tdpBackend': 'TDP backend',
@@ -105,6 +111,12 @@ var AutoTDP_Plugin = (function (React, ui) {
             'toggle.autotdp': 'Auto TDP',
             'toggle.running': 'Работает',
             'toggle.stopped': 'Остановлен',
+            'section.plugin': 'Плагин',
+            'toggle.plugin': 'Плагин включён',
+            'toggle.plugin.on': 'Управляет TDP и вентилятором',
+            'toggle.plugin.off': 'Полностью отключён: TDP и вентилятор не трогаются',
+            'toggle.plugin.gui': 'Приостановлен: открыто окно tdp_gui.py (pid {0})',
+            'err.plugin': 'Не удалось переключить плагин',
             'row.build': 'Сборка',
             'row.build.old': 'старый backend: переустановите архив',
             'row.tdpBackend': 'Бэкенд TDP',
@@ -199,7 +211,7 @@ var AutoTDP_Plugin = (function (React, ui) {
     // SPDX-License-Identifier: MIT
     // Copyright (c) 2026 GPD5CachyAutoTDP Contributors
     const DEFAULT_CONFIG = {
-        enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false, language: 'en',
+        plugin_enabled: true, enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false, language: 'en',
         check_interval_sec: 3, hysteresis_threshold: 5,
         fan_control: { enabled: true },
     };
@@ -343,6 +355,20 @@ var AutoTDP_Plugin = (function (React, ui) {
                 await save('enabled', value);
                 await refresh();
             };
+            const pluginEnabled = cfg.plugin_enabled !== false;
+            // active приходит из get_stats: false, если плагин выключен или приостановлен окном tdp_gui.py.
+            const pluginActive = stats ? stats.active !== false : pluginEnabled;
+            const guiPid = stats && stats.gui_pid;
+            const togglePlugin = async (value) => {
+                setCfg((x) => ({ ...x, plugin_enabled: value }));
+                const ok = await rpc('set_plugin_enabled', { enabled: value });
+                if (!ok)
+                    setError(tr('err.plugin'));
+                await refresh();
+            };
+            const pluginDesc = !pluginEnabled ? tr('toggle.plugin.off')
+                : guiPid ? tr('toggle.plugin.gui', guiPid)
+                    : tr('toggle.plugin.on');
             const t = (stats && stats.tdp) || {};
             const m = (stats && stats.monitor) || {};
             const f = (stats && stats.fan) || {};
@@ -368,7 +394,10 @@ var AutoTDP_Plugin = (function (React, ui) {
             const maxTdp = Math.min(80, safeNum(cfg.max_tdp, 80));
             const initialTdp = safeNum(cfg.initial_tdp, 35);
             return React.createElement(React.Fragment, null,
-                React.createElement(ui.PanelSection, { title: tr('section.autotdp') },
+                React.createElement(ui.PanelSection, { title: tr('section.plugin') },
+                    React.createElement(ui.PanelSectionRow, null,
+                        React.createElement(ui.ToggleField, { label: tr('toggle.plugin'), description: pluginDesc, checked: pluginEnabled, onChange: togglePlugin }))),
+                pluginActive && React.createElement(ui.PanelSection, { title: tr('section.autotdp') },
                     React.createElement(ui.PanelSectionRow, null,
                         React.createElement(ui.ToggleField, { label: tr('toggle.autotdp'), description: enabled ? tr('toggle.running') : tr('toggle.stopped'), checked: enabled, onChange: toggle }))),
                 (error || (stats && stats.init_errors && stats.init_errors.length)) && React.createElement(ui.PanelSection, { title: tr('section.status') },
@@ -379,97 +408,98 @@ var AutoTDP_Plugin = (function (React, ui) {
                             tr('init.title'),
                             ": ",
                             String(e))))),
-                React.createElement(ui.PanelSection, { title: tr('section.fps') },
-                    React.createElement(Row, { label: tr('row.build'), value: (stats && stats.build) || tr('row.build.old') }),
-                    React.createElement(Row, { label: tr('row.tdpBackend'), value: t.backend || 'none' }),
-                    React.createElement(Row, { label: tr('row.currentTdp'), value: t.current_tdp != null ? `${safeNum(t.current_tdp, 0).toFixed(1)} W` : '—' }),
-                    React.createElement(Row, { label: tr('row.tdpSource'), value: t.tdp_source === 'setpoint' ? tr('row.tdpSource.setpoint') : (t.tdp_source || '—') }),
-                    React.createElement(Row, { label: tr('row.avgFps'), value: m.last_fps != null ? safeNum(m.last_fps, 0).toFixed(1) : '—' }),
-                    React.createElement(Row, { label: tr('row.effectiveGoal'), value: m.effective_target_fps != null ? String(m.effective_target_fps) : '—' }),
-                    React.createElement(Row, { label: tr('row.tdpDecision'), value: m.tdp_hold_level != null ? tr('row.tdpCapped', m.tdp_hold_level) : (m.tdp_decision || '—') }),
-                    React.createElement(Row, { label: tr('search.state'), value: tr('search.state.' + ((m.tdp_search && m.tdp_search.state) || 'idle')) }),
-                    React.createElement(Row, { label: tr('search.good'), value: (m.tdp_search && m.tdp_search.good_w) != null ? `${m.tdp_search.good_w} W` : tr('search.unknown') }),
-                    React.createElement(Row, { label: tr('search.bad'), value: (m.tdp_search && m.tdp_search.bad_w) != null ? `${m.tdp_search.bad_w} W` : tr('search.unknown') }),
-                    React.createElement(Row, { label: tr('search.probes'), value: (m.tdp_search && (m.tdp_search.last_search_probes || m.tdp_search.probes)) || 0 }),
-                    React.createElement(Row, { label: tr('row.cpuLoad'), value: m.last_cpu_load != null ? `${safeNum(m.last_cpu_load, 0).toFixed(1)}%` : '—' }),
-                    React.createElement(Row, { label: tr('row.gpuLoad'), value: m.last_gpu_load != null ? `${safeNum(m.last_gpu_load, 0).toFixed(1)}%` : '—' }),
-                    React.createElement(Row, { label: tr('row.controller'), value: m.state || tr('row.controller.stopped') }),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.SliderField, { label: tr('slider.targetFps'), value: target, min: 30, max: 120, step: 5, showValue: true, onChange: (v) => updateMonitorParam('target_fps', v) })),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.SliderField, { label: tr('slider.startTdp'), description: enabled ? tr('slider.startTdp.on') : tr('slider.startTdp.off'), value: initialTdp, min: 5, max: 80, step: 1, showValue: true, valueSuffix: " W", onChange: async (v) => { const ok = await save('initial_tdp', v); if (ok && !enabled)
-                                await rpc('set_tdp', { value: v }); } })),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.SliderField, { label: tr('slider.minTdp'), value: minTdp, min: 5, max: maxTdp, step: 1, showValue: true, valueSuffix: " W", onChange: (v) => updateMonitorParam('min_tdp', v) })),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.SliderField, { label: tr('slider.maxTdp'), value: maxTdp, min: minTdp, max: 80, step: 1, showValue: true, valueSuffix: " W", onChange: (v) => updateMonitorParam('max_tdp', v) })),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.ToggleField, { label: tr('toggle.loadBoost'), description: cfg.load_boost_enabled ? tr('toggle.loadBoost.on', safeNum(cfg.load_boost_threshold, 95)) : tr('toggle.loadBoost.off'), checked: !!cfg.load_boost_enabled, onChange: async (v) => { const ok = await save('load_boost_enabled', v); if (ok)
-                                await refresh(); } })),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.SliderField, { label: tr('slider.interval'), description: tr('slider.interval.desc'), value: safeNum(cfg.check_interval_sec, 1), min: 0.5, max: 5, step: 0.5, showValue: true, valueSuffix: " s", onChange: async (v) => { setCfg((x) => ({ ...x, check_interval_sec: v })); const ok = await rpc('set_check_interval', { seconds: v }); if (!ok)
-                                setError(tr('err.save')); } })),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.SliderField, { label: tr('slider.threshold'), value: safeNum(cfg.load_boost_threshold, 95), min: 90, max: 100, step: 1, showValue: true, valueSuffix: "%", onChange: (v) => save('load_boost_threshold', v) }))),
-                React.createElement(ui.PanelSection, { title: tr('section.fan') },
-                    React.createElement(Row, { label: tr('fan.controller'), value: f.available ? tr('fan.controller.ok') : tr('fan.controller.none') }),
-                    React.createElement(Row, { label: tr('fan.temp'), value: f.current_temperature != null ? `${safeNum(f.current_temperature, 0).toFixed(1)} °C` : '—' }),
-                    React.createElement(Row, { label: tr('fan.channels'), value: f.channels || 0 }),
-                    React.createElement(Row, { label: tr('fan.rpm'), value: f.fan_rpm?.length ? f.fan_rpm.map((v) => v == null ? '—' : v).join(', ') : '—' }),
-                    React.createElement(Row, { label: tr('fan.pwm'), value: f.pwm_percent?.length ? f.pwm_percent.map((v) => v == null ? '—' : `${v.toFixed(1)}%`).join(', ') : '—' }),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.ToggleField, { label: tr('fan.control'), description: cfg.fan_control?.enabled ? tr('fan.control.on') : tr('fan.control.off'), checked: !!cfg.fan_control?.enabled, disabled: !f.available, onChange: async (v) => { const ok = await rpc(v ? 'enable_fan_control' : 'disable_fan_control'); if (ok)
-                                await refresh(); } })),
-                    !f.available && React.createElement(ui.PanelSectionRow, null,
-                        React.createElement("span", { style: { color: '#94a3b8' } }, tr('fan.notDetected'))),
-                    f.available && React.createElement(React.Fragment, null,
+                pluginActive && React.createElement(React.Fragment, null,
+                    React.createElement(ui.PanelSection, { title: tr('section.fps') },
+                        React.createElement(Row, { label: tr('row.build'), value: (stats && stats.build) || tr('row.build.old') }),
+                        React.createElement(Row, { label: tr('row.tdpBackend'), value: t.backend || 'none' }),
+                        React.createElement(Row, { label: tr('row.currentTdp'), value: t.current_tdp != null ? `${safeNum(t.current_tdp, 0).toFixed(1)} W` : '—' }),
+                        React.createElement(Row, { label: tr('row.tdpSource'), value: t.tdp_source === 'setpoint' ? tr('row.tdpSource.setpoint') : (t.tdp_source || '—') }),
+                        React.createElement(Row, { label: tr('row.avgFps'), value: m.last_fps != null ? safeNum(m.last_fps, 0).toFixed(1) : '—' }),
+                        React.createElement(Row, { label: tr('row.effectiveGoal'), value: m.effective_target_fps != null ? String(m.effective_target_fps) : '—' }),
+                        React.createElement(Row, { label: tr('row.tdpDecision'), value: m.tdp_hold_level != null ? tr('row.tdpCapped', m.tdp_hold_level) : (m.tdp_decision || '—') }),
+                        React.createElement(Row, { label: tr('search.state'), value: tr('search.state.' + ((m.tdp_search && m.tdp_search.state) || 'idle')) }),
+                        React.createElement(Row, { label: tr('search.good'), value: (m.tdp_search && m.tdp_search.good_w) != null ? `${m.tdp_search.good_w} W` : tr('search.unknown') }),
+                        React.createElement(Row, { label: tr('search.bad'), value: (m.tdp_search && m.tdp_search.bad_w) != null ? `${m.tdp_search.bad_w} W` : tr('search.unknown') }),
+                        React.createElement(Row, { label: tr('search.probes'), value: (m.tdp_search && (m.tdp_search.last_search_probes || m.tdp_search.probes)) || 0 }),
+                        React.createElement(Row, { label: tr('row.cpuLoad'), value: m.last_cpu_load != null ? `${safeNum(m.last_cpu_load, 0).toFixed(1)}%` : '—' }),
+                        React.createElement(Row, { label: tr('row.gpuLoad'), value: m.last_gpu_load != null ? `${safeNum(m.last_gpu_load, 0).toFixed(1)}%` : '—' }),
+                        React.createElement(Row, { label: tr('row.controller'), value: m.state || tr('row.controller.stopped') }),
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement("span", { style: { color: '#dbeafe' } }, tr('curve.hint'))),
-                        (curveEdit || curveFromConfig(cfg)).map((pt, i) => (React.createElement(ui.PanelSectionRow, { key: `t${i}` },
-                            React.createElement(ui.SliderField, { label: `${tr('curve.point', i + 1)} — ${tr('curve.temp')}`, value: pt.t, min: 20, max: 110, step: 1, showValue: true, onChange: (v) => setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 't', v)) })))),
-                        (curveEdit || curveFromConfig(cfg)).map((pt, i) => (React.createElement(ui.PanelSectionRow, { key: `s${i}` },
-                            React.createElement(ui.SliderField, { label: `${tr('curve.point', i + 1)} — ${tr('curve.speed')}`, value: pt.s, min: 0, max: 100, step: 1, showValue: true, onChange: (v) => setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 's', v)) })))),
+                            React.createElement(ui.SliderField, { label: tr('slider.targetFps'), value: target, min: 30, max: 120, step: 5, showValue: true, onChange: (v) => updateMonitorParam('target_fps', v) })),
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.ButtonItem, { onClick: () => setCurveEdit([...(curveEdit || curveFromConfig(cfg)), { t: 100, s: 100 }]) }, tr('curve.add'))),
+                            React.createElement(ui.SliderField, { label: tr('slider.startTdp'), description: enabled ? tr('slider.startTdp.on') : tr('slider.startTdp.off'), value: initialTdp, min: 5, max: 80, step: 1, showValue: true, valueSuffix: " W", onChange: async (v) => { const ok = await save('initial_tdp', v); if (ok && !enabled)
+                                    await rpc('set_tdp', { value: v }); } })),
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.ButtonItem, { onClick: () => setCurveEdit((curveEdit || curveFromConfig(cfg)).slice(0, -1)) }, tr('curve.remove'))),
+                            React.createElement(ui.SliderField, { label: tr('slider.minTdp'), value: minTdp, min: 5, max: maxTdp, step: 1, showValue: true, valueSuffix: " W", onChange: (v) => updateMonitorParam('min_tdp', v) })),
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.ButtonItem, { onClick: async () => {
-                                    const list = curveEdit || curveFromConfig(cfg);
-                                    // Склеиваем точки с одинаковой температурой, оставляя бо́льшую скорость:
-                                    // иначе бэкенд получит словарь с потерянными точками, а редактор покажет их заново.
-                                    const obj = {};
-                                    list.forEach((p) => {
-                                        const key = String(Math.round(p.t)), val = Math.round(p.s);
-                                        obj[key] = obj[key] === undefined ? val : Math.max(obj[key], val);
-                                    });
-                                    const res = await rpc('set_fan_curve', { curve: obj });
-                                    if (res && res.ok) {
-                                        setCurveMsg(tr('curve.saved'));
+                            React.createElement(ui.SliderField, { label: tr('slider.maxTdp'), value: maxTdp, min: minTdp, max: 80, step: 1, showValue: true, valueSuffix: " W", onChange: (v) => updateMonitorParam('max_tdp', v) })),
+                        React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(ui.ToggleField, { label: tr('toggle.loadBoost'), description: cfg.load_boost_enabled ? tr('toggle.loadBoost.on', safeNum(cfg.load_boost_threshold, 95)) : tr('toggle.loadBoost.off'), checked: !!cfg.load_boost_enabled, onChange: async (v) => { const ok = await save('load_boost_enabled', v); if (ok)
+                                    await refresh(); } })),
+                        React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(ui.SliderField, { label: tr('slider.interval'), description: tr('slider.interval.desc'), value: safeNum(cfg.check_interval_sec, 1), min: 0.5, max: 5, step: 0.5, showValue: true, valueSuffix: " s", onChange: async (v) => { setCfg((x) => ({ ...x, check_interval_sec: v })); const ok = await rpc('set_check_interval', { seconds: v }); if (!ok)
+                                    setError(tr('err.save')); } })),
+                        React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(ui.SliderField, { label: tr('slider.threshold'), value: safeNum(cfg.load_boost_threshold, 95), min: 90, max: 100, step: 1, showValue: true, valueSuffix: "%", onChange: (v) => save('load_boost_threshold', v) }))),
+                    React.createElement(ui.PanelSection, { title: tr('section.fan') },
+                        React.createElement(Row, { label: tr('fan.controller'), value: f.available ? tr('fan.controller.ok') : tr('fan.controller.none') }),
+                        React.createElement(Row, { label: tr('fan.temp'), value: f.current_temperature != null ? `${safeNum(f.current_temperature, 0).toFixed(1)} °C` : '—' }),
+                        React.createElement(Row, { label: tr('fan.channels'), value: f.channels || 0 }),
+                        React.createElement(Row, { label: tr('fan.rpm'), value: f.fan_rpm?.length ? f.fan_rpm.map((v) => v == null ? '—' : v).join(', ') : '—' }),
+                        React.createElement(Row, { label: tr('fan.pwm'), value: f.pwm_percent?.length ? f.pwm_percent.map((v) => v == null ? '—' : `${v.toFixed(1)}%`).join(', ') : '—' }),
+                        React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(ui.ToggleField, { label: tr('fan.control'), description: cfg.fan_control?.enabled ? tr('fan.control.on') : tr('fan.control.off'), checked: !!cfg.fan_control?.enabled, disabled: !f.available, onChange: async (v) => { const ok = await rpc(v ? 'enable_fan_control' : 'disable_fan_control'); if (ok)
+                                    await refresh(); } })),
+                        !f.available && React.createElement(ui.PanelSectionRow, null,
+                            React.createElement("span", { style: { color: '#94a3b8' } }, tr('fan.notDetected'))),
+                        f.available && React.createElement(React.Fragment, null,
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement("span", { style: { color: '#dbeafe' } }, tr('curve.hint'))),
+                            (curveEdit || curveFromConfig(cfg)).map((pt, i) => (React.createElement(ui.PanelSectionRow, { key: `t${i}` },
+                                React.createElement(ui.SliderField, { label: `${tr('curve.point', i + 1)} — ${tr('curve.temp')}`, value: pt.t, min: 20, max: 110, step: 1, showValue: true, onChange: (v) => setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 't', v)) })))),
+                            (curveEdit || curveFromConfig(cfg)).map((pt, i) => (React.createElement(ui.PanelSectionRow, { key: `s${i}` },
+                                React.createElement(ui.SliderField, { label: `${tr('curve.point', i + 1)} — ${tr('curve.speed')}`, value: pt.s, min: 0, max: 100, step: 1, showValue: true, onChange: (v) => setCurveEdit(updateCurvePoint(curveEdit || curveFromConfig(cfg), i, 's', v)) })))),
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.ButtonItem, { onClick: () => setCurveEdit([...(curveEdit || curveFromConfig(cfg)), { t: 100, s: 100 }]) }, tr('curve.add'))),
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.ButtonItem, { onClick: () => setCurveEdit((curveEdit || curveFromConfig(cfg)).slice(0, -1)) }, tr('curve.remove'))),
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.ButtonItem, { onClick: async () => {
+                                        const list = curveEdit || curveFromConfig(cfg);
+                                        // Склеиваем точки с одинаковой температурой, оставляя бо́льшую скорость:
+                                        // иначе бэкенд получит словарь с потерянными точками, а редактор покажет их заново.
+                                        const obj = {};
+                                        list.forEach((p) => {
+                                            const key = String(Math.round(p.t)), val = Math.round(p.s);
+                                            obj[key] = obj[key] === undefined ? val : Math.max(obj[key], val);
+                                        });
+                                        const res = await rpc('set_fan_curve', { curve: obj });
+                                        if (res && res.ok) {
+                                            setCurveMsg(tr('curve.saved'));
+                                            setCurveEdit(null);
+                                            await refresh();
+                                        }
+                                        else
+                                            setCurveMsg(tr('curve.saveFail', (res && res.error) || tr('search.unknown')));
+                                    } }, tr('curve.save'))),
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.ButtonItem, { onClick: async () => { const res = await rpc('reset_fan_curve'); if (res && res.ok) {
                                         setCurveEdit(null);
+                                        setCurveMsg('');
                                         await refresh();
                                     }
                                     else
-                                        setCurveMsg(tr('curve.saveFail', (res && res.error) || tr('search.unknown')));
-                                } }, tr('curve.save'))),
+                                        setCurveMsg(tr('curve.saveFail', (res && res.error) || tr('search.unknown'))); } }, tr('curve.reset'))),
+                            curveMsg && React.createElement(ui.PanelSectionRow, null,
+                                React.createElement("span", { style: { color: '#dbeafe' } }, curveMsg)))),
+                    React.createElement(ui.PanelSection, { title: tr('section.source') },
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.ButtonItem, { onClick: async () => { const res = await rpc('reset_fan_curve'); if (res && res.ok) {
-                                    setCurveEdit(null);
-                                    setCurveMsg('');
-                                    await refresh();
-                                }
-                                else
-                                    setCurveMsg(tr('curve.saveFail', (res && res.error) || tr('search.unknown'))); } }, tr('curve.reset'))),
-                        curveMsg && React.createElement(ui.PanelSectionRow, null,
-                            React.createElement("span", { style: { color: '#dbeafe' } }, curveMsg)))),
-                React.createElement(ui.PanelSection, { title: tr('section.source') },
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement("span", { style: { color: '#dbeafe' } }, tr('src.note'))),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(Row, { label: tr('src.source'), value: m.fps_source || tr('src.sourceDefault') })),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.ToggleField, { label: tr('src.hud'), description: cfg.mangohud_display ? tr('src.hud.on') : tr('src.hud.off'), checked: !!cfg.mangohud_display, onChange: async (v) => { const ok = await rpc('set_mangohud_display', { enabled: v }); if (ok)
-                                await refresh(); } }))),
+                            React.createElement("span", { style: { color: '#dbeafe' } }, tr('src.note'))),
+                        React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(Row, { label: tr('src.source'), value: m.fps_source || tr('src.sourceDefault') })),
+                        React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(ui.ToggleField, { label: tr('src.hud'), description: cfg.mangohud_display ? tr('src.hud.on') : tr('src.hud.off'), checked: !!cfg.mangohud_display, onChange: async (v) => { const ok = await rpc('set_mangohud_display', { enabled: v }); if (ok)
+                                    await refresh(); } })))),
                 React.createElement(ui.PanelSection, { title: tr('lang.title') },
                     React.createElement(ui.PanelSectionRow, null,
                         React.createElement(ui.ToggleField, { label: tr('lang.en'), description: cfg.language === 'en' ? '✓' : '', checked: cfg.language === 'en', onChange: async (v) => { if (!v)
@@ -485,12 +515,19 @@ var AutoTDP_Plugin = (function (React, ui) {
                                 setError(tr('err.lang')); } }))));
         };
     }
+    // Иконка плагина: микросхема с молнией (управление мощностью чипа).
+    // Цвет — currentColor, поэтому значок подсвечивается вместе с остальными в меню Decky.
+    // Тот же рисунок лежит в assets/icon.svg.
+    const PluginIcon = () => (React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", viewBox: "0 0 24 24", width: "1em", height: "1em", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+        React.createElement("rect", { x: "4.5", y: "4.5", width: "15", height: "15", rx: "2.8" }),
+        React.createElement("path", { d: "M9.5 1.8v2.7M14.5 1.8v2.7M9.5 19.5v2.7M14.5 19.5v2.7M1.8 9.5h2.7M1.8 14.5h2.7M19.5 9.5h2.7M19.5 14.5h2.7" }),
+        React.createElement("path", { d: "M13.7 6.6 8.3 13h3.6l-1.6 4.4L15.7 11h-3.6z", fill: "currentColor", stroke: "none" })));
     function createPlugin(serverAPI) {
         const Content = makeContent(serverAPI);
         return {
             title: React.createElement("div", { className: ui.staticClasses?.Title || '' }, "GPD5CachyAutoTDP"),
             content: React.createElement(Content, null),
-            icon: React.createElement("span", null, "\u26A1"),
+            icon: React.createElement(PluginIcon, null),
             onDismount() { }
         };
     }

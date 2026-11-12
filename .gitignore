@@ -11,3 +11,6 @@ dist-debug/
 .DS_Store
 .idea/
 .vscode/
+
+# Собранные архивы для Decky (tools/build_release.py)
+release/
