@@ -11,7 +11,7 @@ type ServerAPI = { callPluginMethod: (method: string, args?: Record<string, unkn
 const DEFAULT_CONFIG = {
   plugin_enabled: true, enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false, language: 'auto',
   check_interval_sec: 1, hysteresis_threshold: 5,
-  fan_control: { enabled: true },
+  fan_control: { enabled: true, mode: 'curve', manual_pct: 50 },
 };
 
 const LOOKS_LIKE_CONFIG = ['enabled','target_fps','min_tdp','max_tdp','initial_tdp','fan_control'];
@@ -163,6 +163,22 @@ function makeContent(serverAPI: ServerAPI) {
       arr.sort((a:any,b:any)=>a.t-b.t);
       return arr.length?arr:[{t:50,s:20},{t:95,s:100}];
     };
+    // Режим вентилятора: firmware | curve | manual. Старые конфиги без mode — по enabled.
+    const fc=cfg.fan_control||{};
+    const fanMode:string = ['firmware','curve','manual'].includes(fc.mode) ? fc.mode : (fc.enabled===false ? 'firmware' : 'curve');
+    const manualPct = Math.round(safeNum(fc.manual_pct,50));
+    const setFanMode = async (mode:string, pct?:number) => {
+      setCfg((x:any)=>({...x,fan_control:{...x.fan_control,mode,enabled:mode!=='firmware',...(pct!=null?{manual_pct:pct}:{})}}));
+      const res = await rpc('set_fan_mode', pct!=null ? {mode,pct} : {mode});
+      if (!res || !res.ok) setError(tr('err.fan', (res&&res.error)||'?'));
+      await refresh();
+    };
+    const setManualDebounced = (pct:number) => {
+      setCfg((x:any)=>({...x,fan_control:{...x.fan_control,manual_pct:pct}}));
+      const old=pendingTimers.current.fan; if (old) clearTimeout(old);
+      refreshBlockedUntil.current = Date.now() + 900;
+      pendingTimers.current.fan = setTimeout(()=>setFanMode('manual',pct), 300);
+    };
     const target=safeNum(cfg.target_fps,40);
     const minTdp=safeNum(cfg.min_tdp,15);
     const maxTdp=Math.min(80,safeNum(cfg.max_tdp,80));
@@ -255,19 +271,24 @@ function makeContent(serverAPI: ServerAPI) {
         {!f.available && <PanelSectionRow><span style={{color:COLORS.dim,fontSize:13}}>{tr('fan.notDetected')}</span></PanelSectionRow>}
         {f.available && <>
           <PanelSectionRow>
-            <ToggleField label={tr('fan.control')} checked={!!cfg.fan_control?.enabled}
-              description={cfg.fan_control?.enabled?tr('fan.control.on'):tr('fan.control.off')}
-              onChange={async(v:boolean)=>{const ok=await rpc(v?'enable_fan_control':'disable_fan_control');if(ok) await refresh();}}/>
+            <DropdownItem label={tr('fan.mode')} description={tr('fan.mode.desc.'+fanMode)} selectedOption={fanMode}
+              rgOptions={[{data:'firmware',label:tr('fan.mode.firmware')},{data:'curve',label:tr('fan.mode.curve')},{data:'manual',label:tr('fan.mode.manual')}]}
+              onChange={(o:any)=>{ if (o.data!==fanMode) setFanMode(o.data, o.data==='manual' ? manualPct : undefined); }}/>
           </PanelSectionRow>
+          {fanMode==='manual' && <PanelSectionRow>
+            <SliderField label={tr('fan.manual')} value={manualPct} min={0} max={100} step={5} showValue valueSuffix="%"
+              onChange={(v:number)=>setManualDebounced(v)}/>
+          </PanelSectionRow>}
+          {fanMode==='manual' && f.safety_active && <PanelSectionRow><Banner tone="warn" text={tr('fan.safety', safeNum(f.safety_temp,90))}/></PanelSectionRow>}
           <PanelSectionRow>
             <div style={{width:'100%'}}>
-              <CurveGraph points={curveFromConfig(cfg)} height={140} now={{t: temp, s: pwm}}/>
+              {fanMode==='curve' && <CurveGraph points={curveFromConfig(cfg)} height={140} now={{t: temp, s: pwm}}/>}
               <div style={{fontSize:12,color:COLORS.tdp,textAlign:'right',marginTop:2}}>
                 {tr('fan.caption', temp!=null?temp.toFixed(0):'—', pwm!=null?pwm.toFixed(0):'—', rpm!=null?rpm:'—')}
               </div>
             </div>
           </PanelSectionRow>
-          <PanelSectionRow><ButtonItem layout="below" onClick={()=>{
+          {fanMode==='curve' && <PanelSectionRow><ButtonItem layout="below" onClick={()=>{
             const lang=cfg.language;
             setCurveMsg('');
             showModal(<FanCurveModal initial={curveFromConfig(cfg)} tr={(k:string,...a:Array<string|number>)=>translate(lang,k,...a)}
@@ -279,7 +300,7 @@ function makeContent(serverAPI: ServerAPI) {
                 if (res && res.ok) { setCurveMsg(tr('curve.saved')); await refresh(); return {ok:true}; }
                 return {ok:false, error:(res&&res.error)||tr('search.unknown')};
               }}/>);
-          }}>{tr('curve.edit')}</ButtonItem></PanelSectionRow>
+          }}>{tr('curve.edit')}</ButtonItem></PanelSectionRow>}
           {curveMsg && <PanelSectionRow><span style={{color:COLORS.ok,fontSize:12}}>{curveMsg}</span></PanelSectionRow>}
         </>}
       </PanelSection>}

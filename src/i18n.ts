@@ -65,9 +65,15 @@ export const DICT: Record<Lang, Record<string, string>> = {
 
     // вентилятор
     'section.fan': 'Fan',
-    'fan.control': 'Fan curve',
-    'fan.control.on': 'The plugin drives the fan',
-    'fan.control.off': 'Firmware drives the fan',
+    'fan.mode': 'Fan mode',
+    'fan.mode.firmware': 'Firmware',
+    'fan.mode.curve': 'Curve',
+    'fan.mode.manual': 'Fixed speed',
+    'fan.mode.desc.firmware': 'The firmware drives the fan',
+    'fan.mode.desc.curve': 'Speed follows the temperature curve',
+    'fan.mode.desc.manual': 'Constant speed; at high temperature not below the curve',
+    'fan.manual': 'Fan speed',
+    'fan.safety': 'Above {0} °C: speed raised to the curve value',
     'fan.caption': '{0} °C · {1} % · {2} rpm',
     'fan.notDetected': 'PWM fan controller not detected.',
 
@@ -124,6 +130,7 @@ export const DICT: Record<Lang, Record<string, string>> = {
     'err.toggle': 'Could not switch Auto TDP',
     'err.plugin': 'Could not switch the plugin',
     'err.lang': 'Could not save the language',
+    'err.fan': 'Could not switch the fan mode: {0}',
   },
   ru: {
     'unit.w': 'Вт',
@@ -180,9 +187,15 @@ export const DICT: Record<Lang, Record<string, string>> = {
     'lang.ru': 'Русский',
 
     'section.fan': 'Вентилятор',
-    'fan.control': 'Кривая вентилятора',
-    'fan.control.on': 'Вентилятором управляет плагин',
-    'fan.control.off': 'Вентилятором управляет прошивка',
+    'fan.mode': 'Режим вентилятора',
+    'fan.mode.firmware': 'Прошивка',
+    'fan.mode.curve': 'Кривая',
+    'fan.mode.manual': 'Фиксированная скорость',
+    'fan.mode.desc.firmware': 'Вентилятором управляет прошивка',
+    'fan.mode.desc.curve': 'Скорость по кривой температуры',
+    'fan.mode.desc.manual': 'Постоянная скорость; при перегреве не ниже кривой',
+    'fan.manual': 'Скорость вентилятора',
+    'fan.safety': 'Выше {0} °C: скорость поднята до значения кривой',
     'fan.caption': '{0} °C · {1} % · {2} об/мин',
     'fan.notDetected': 'Контроллер PWM-вентилятора не обнаружен.',
 
@@ -236,6 +249,7 @@ export const DICT: Record<Lang, Record<string, string>> = {
     'err.toggle': 'Не удалось переключить Auto TDP',
     'err.plugin': 'Не удалось переключить плагин',
     'err.lang': 'Не удалось сохранить язык',
+    'err.fan': 'Не удалось переключить режим вентилятора: {0}',
   },
 };
 

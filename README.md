@@ -26,7 +26,7 @@ The project is provided as-is under the MIT License. Hardware-control operations
 - **Minimum and maximum TDP** limits, and a **Start TDP** that is applied when Auto TDP is switched off.
 - **High-load TDP boost.** Sustained high CPU load raises the TDP even when FPS is on target, which helps shader compilation. High GPU load raises the TDP only when FPS is below target. The threshold is adjustable (90–100 %).
 - **Plateau detection.** If raising the TDP no longer increases FPS, the TDP is capped at that level for a while, so the plugin does not keep spending power for nothing.
-- **Fan curve control** on the GPD WIN 5 PWM fan controller, with a temperature-to-speed curve and an in-plugin curve editor (temperature and speed per point, add and remove points, save and reset).
+- **Fan control** on the GPD WIN 5 PWM fan controller in three modes: firmware, a temperature-to-speed curve with a graphical editor, or a fixed speed.
 - **MangoHud display switch.** Shows or hides the mangoapp overlay while keeping FPS logging active.
 - **English and Русский interface.** By default the plugin follows the Steam language; it can be fixed under **More settings → Language** and is saved in the configuration.
 - **Poll interval** is adjustable in the interface: shorter reacts faster, at the cost of reading the MangoHud log more often.
@@ -60,7 +60,9 @@ CPU load above the threshold raises the TDP in steps, independent of FPS, becaus
 
 ### Fan control
 
-The fan follows the configured curve: a temperature (°C) maps to a fan speed (%). The curve must rise monotonically: higher temperatures never give a lower fan speed. The fan is returned to automatic control when the plugin is disabled.
+The **Fan mode** selector has three modes: **Firmware** (the firmware drives the fan), **Curve** (described below) and **Fixed speed** (a constant 0–100 %, rewritten every 5 seconds in case the firmware takes over; from 90 °C the fan never runs slower than the curve would, so a low fixed speed cannot overheat the chip).
+
+In **Curve** mode the fan follows the configured curve: a temperature (°C) maps to a fan speed (%). The curve must rise monotonically: higher temperatures never give a lower fan speed. The fan is returned to automatic control when the plugin is disabled.
 
 To keep the fan quiet and steady:
 

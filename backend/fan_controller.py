@@ -23,6 +23,12 @@
 временно увеличивается на tdp_boost_pct_per_w * N на tdp_boost_sec секунд.
 Температура растёт с задержкой, а вентилятор начинает раскручиваться заранее.
 Обратное (снижение при падении TDP) не делается: лучше охладить лишний раз.
+
+Режимы (3.8.0): 'firmware' — вентилятором управляет прошивка; 'curve' — кривая выше;
+'manual' — фиксированная скорость manual_pct. В ручном режиме значение переписывается
+раз в MANUAL_REWRITE_SEC (прошивка может его перехватить), а при температуре от
+SAFETY_TEMP_C скорость не ниже значения кривой: фиксированные 0-20 % не должны
+перегреть чип.
 """
 
 import logging
@@ -50,6 +56,9 @@ class FanController:
     TDP_BOOST_PCT_PER_W = 1.5     # опережение: +1.5 % на каждый ватт подъёма TDP
     TDP_BOOST_SEC = 8.0           # сколько секунд действует опережение
     POLL_SEC = 1.0                # опрос раз в секунду, запись только при изменении
+    MODES = ('firmware', 'curve', 'manual')
+    MANUAL_REWRITE_SEC = 5.0      # ручная скорость переписывается не реже этого
+    SAFETY_TEMP_C = 90.0          # в ручном режиме от этой температуры — не ниже кривой
 
     def __init__(self):
         self.devices = []
@@ -69,6 +78,10 @@ class FanController:
         self._tdp_boost_until = 0.0
         self._tdp_boost_pct = 0.0
         self.last_error: Optional[str] = None
+        self.mode = 'firmware'
+        self.manual_pct: Optional[float] = None
+        self.safety_active = False
+        self._manual_written_t = -1e9
 
     # --- обнаружение ------------------------------------------------------
     def _detect(self):
@@ -228,6 +241,8 @@ class FanController:
         if not self.is_available():
             return False
         self._mode(True)
+        self.mode = 'curve'
+        self.safety_active = False
         self.enabled = True
         self._last_temp = None
         self._applied_pct = None
@@ -236,6 +251,8 @@ class FanController:
 
     def disable(self):
         self.enabled = False
+        self.mode = 'firmware'
+        self.safety_active = False
         self._stop.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(2)
@@ -244,6 +261,40 @@ class FanController:
         self._target_pct = None
         self._last_temp = None
         return True
+
+    def set_manual(self, pct: float) -> bool:
+        """Фиксированная скорость pct % (0-100). Кривая при этом не работает."""
+        if not self.is_available():
+            return False
+        self.manual_pct = max(0.0, min(100.0, float(pct)))
+        self.enabled = False          # кривая выключена
+        self.mode = 'manual'
+        self._target_pct = None
+        self._last_temp = None
+        self._mode(True)
+        ok = self._apply_manual(time.monotonic(), force=True)
+        self.start_background()
+        return ok
+
+    def _apply_manual(self, now: float, force: bool = False) -> bool:
+        if self.mode != 'manual' or self.manual_pct is None:
+            return False
+        target = self.manual_pct
+        t = self.read_temperature()
+        self.safety_active = t is not None and t >= self.SAFETY_TEMP_C and self.calc(t) > target
+        if self.safety_active:
+            target = self.calc(t)
+        changed = self._applied_pct is None or abs(target - self._applied_pct) >= 1.0
+        due = now - self._manual_written_t >= self.MANUAL_REWRITE_SEC
+        if not (force or changed or due):
+            return False
+        if force or due:
+            self._mode(True)   # прошивка могла вернуть себе управление
+        ok = self.set_fan_speed(target)
+        if ok:
+            self._applied_pct = target
+            self._manual_written_t = now
+        return ok
 
     def start_background(self, interval: float = None):
         if not self.is_available():
@@ -260,7 +311,10 @@ class FanController:
     def _loop(self):
         while not self._stop.is_set():
             try:
-                self.apply()
+                if self.mode == 'manual':
+                    self._apply_manual(time.monotonic())
+                else:
+                    self.apply()
             except Exception as e:
                 self.last_error = str(e)
                 logger.debug('fan loop: %s', e)
@@ -317,6 +371,8 @@ class FanController:
             except (OSError, ValueError):
                 rpm.append(None)
         return {'available': self.is_available(), 'enabled': self.enabled,
+                'mode': self.mode, 'manual_pct': self.manual_pct, 'safety_active': self.safety_active,
+                'safety_temp': self.SAFETY_TEMP_C,
                 'current_temperature': t,
                 'calculated_fan_speed': self.calc(t) if t is not None else None,
                 'target_fan_speed': self._target_pct,

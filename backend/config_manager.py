@@ -25,7 +25,7 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "3.7.0",
+        "version": "3.8.0",
         "config_version": "3.0.0",
         "plugin_enabled": True,
         "enabled": False,
@@ -62,7 +62,8 @@ class ConfigManager:
         },
         "fan_control": {
             "enabled": True,
-            "mode": "auto",
+            "mode": "curve",          # firmware | curve | manual (3.8.0)
+            "manual_pct": 50,
             "curve": {
                 "50": 20,
                 "60": 25,
@@ -143,6 +144,13 @@ class ConfigManager:
                 # молча менять поведение у тех, кто настроил интервал, нельзя.
                 if "initial_tdp" not in loaded:
                     merged["initial_tdp"] = min(35, merged["max_tdp"])
+                # 3.8.0: режим вентилятора. Старые конфиги хранили только enabled
+                # (и неиспользуемое mode="auto"): кривая включена -> curve, иначе firmware.
+                fc = merged.get("fan_control")
+                if isinstance(fc, dict):
+                    if fc.get("mode") not in self.FAN_MODES:
+                        fc["mode"] = "curve" if fc.get("enabled", True) else "firmware"
+                    fc.setdefault("manual_pct", 50)
                 self._config = merged
                 logger.info("Loaded config from %s", self.config_path)
                 if migrated:
@@ -310,6 +318,7 @@ class ConfigManager:
         return True
 
     SUPPORTED_LANGUAGES = ("auto", "en", "ru")
+    FAN_MODES = ("firmware", "curve", "manual")
 
     def validate_config(self, config: Dict[str, Any]) -> Tuple[bool, str]:
         if not isinstance(config.get("enabled", False), bool): return False, "enabled must be bool"

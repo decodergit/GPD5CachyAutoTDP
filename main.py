@@ -165,20 +165,33 @@ def _want_active():
 def _start_services():
  """Восстанавливает кривую вентилятора и AutoTDP по сохранённому конфигу."""
  try:
-  if S.cfg and S.fan:
+  if S.cfg and S.fan and S.fan.is_available():
    fc=S.cfg.get_value('fan_control',{})
-   if fc.get('enabled',True) and S.fan.is_available():
-    try:
-     S.fan.set_curve(fc.get('curve',S.fan.get_current_curve())); S.fan.enable()
-     logger.info("AutoTDP: fan curve enabled")
-    except Exception as e: logger.exception("Fan initialization failed: %s", e)
+   mode=_fan_mode(fc)
+   try:
+    S.fan.set_curve(fc.get('curve',S.fan.get_current_curve()))
+    if mode=='curve':
+     S.fan.enable(); logger.info("AutoTDP: fan curve enabled")
+    elif mode=='manual':
+     S.fan.set_manual(_fan_pct(fc.get('manual_pct',50))); logger.info("AutoTDP: fan fixed at %s%%", fc.get('manual_pct',50))
+   except Exception as e: logger.exception("Fan initialization failed: %s", e)
  except Exception as e:
-  logger.exception("AutoTDP: fan curve restore failed: %s", e)
+  logger.exception("AutoTDP: fan restore failed: %s", e)
  try:
   if S.cfg and S.monitor and S.cfg.get_value('enabled',False) and S.tdp and S.tdp.available():
    S.monitor.start(S.cfg.get_value('min_tdp',15),S.cfg.get_value('max_tdp',80),S.cfg.get_value('target_fps',40),S.cfg.get_value('initial_tdp',35))
    logger.info("AutoTDP: restored running state")
  except Exception as e: logger.exception("Saved AutoTDP start failed: %s", e)
+
+def _fan_mode(fc):
+ """Режим вентилятора из конфига: firmware | curve | manual (старые конфиги — по enabled)."""
+ mode=(fc or {}).get('mode')
+ if mode in FanController.MODES: return mode
+ return 'curve' if (fc or {}).get('enabled',True) else 'firmware'
+
+def _fan_pct(v):
+ try: return max(0.0,min(100.0,float(v)))
+ except (TypeError,ValueError): return 50.0
 
 def _stop_services():
  """Останавливает всё, что пишет в систему. Конфиг (enabled, fan_control) не меняется."""
@@ -334,7 +347,7 @@ class Plugin:
   def _stats():
    r={'tdp':S.tdp.stats() if S.tdp else {'backend':'none'},
       'fan':S.fan.get_stats() if S.fan else {'available':False},
-      'epp_ok':S.epp is not None,'build':'3.7.0','init_errors':list(S.init_errors),
+      'epp_ok':S.epp is not None,'build':'3.8.0','init_errors':list(S.init_errors),
       'plugin_enabled':_master_enabled(),'active':S.active,'gui_pid':S.suspended_for}
    if S.epp: r.update(S.epp.get_current_stats())
    r['monitor']=S.monitor.get_stats() if S.monitor else {'state':'stopped'}
@@ -429,17 +442,41 @@ class Plugin:
   if S.cfg: await asyncio.to_thread(S.cfg.set_internal,'fan_control.curve',S.fan.get_current_curve())
   return {'ok':True,'error':''}
 
+ @_safe({'ok':False,'error':'internal error'}, 'set_fan_mode')
+ async def set_fan_mode(self,mode,pct=None):
+  """Режим вентилятора: firmware | curve | manual (pct — фиксированная скорость, %).
+  Сохраняется в fan_control.mode / manual_pct; enabled = режим не firmware."""
+  if mode not in FanController.MODES: return {'ok':False,'error':f'unknown mode {mode}'}
+  if not S.active: return {'ok':False,'error':'plugin is off or paused'}
+  if S.fan is None or not S.fan.is_available(): return {'ok':False,'error':'fan not available'}
+  if mode=='manual':
+   value=_fan_pct(pct if pct is not None else (S.cfg.get_value('fan_control.manual_pct',50) if S.cfg else 50))
+   ok=await asyncio.to_thread(S.fan.set_manual,value)
+  elif mode=='curve':
+   ok=await asyncio.to_thread(S.fan.enable)
+  else:
+   ok=await asyncio.to_thread(S.fan.disable)
+  if S.cfg:
+   await asyncio.to_thread(S.cfg.set_internal,'fan_control.mode',mode)
+   await asyncio.to_thread(S.cfg.set_internal,'fan_control.enabled',mode!='firmware')
+   if mode=='manual': await asyncio.to_thread(S.cfg.set_internal,'fan_control.manual_pct',round(value))
+  return {'ok':bool(ok),'error':'' if ok else 'sysfs write failed'}
+
  @_safe(False, 'enable_fan_control')
  async def enable_fan_control(self):
   if not S.active: return False
   ok=await asyncio.to_thread(S.fan.enable)
-  if S.cfg: await asyncio.to_thread(S.cfg.set_value,'fan_control.enabled',ok)
+  if S.cfg:
+   await asyncio.to_thread(S.cfg.set_value,'fan_control.enabled',ok)
+   if ok: await asyncio.to_thread(S.cfg.set_internal,'fan_control.mode','curve')
   return ok
 
  @_safe(False, 'disable_fan_control')
  async def disable_fan_control(self):
   ok=await asyncio.to_thread(S.fan.disable)
-  if S.cfg: await asyncio.to_thread(S.cfg.set_value,'fan_control.enabled',False)
+  if S.cfg:
+   await asyncio.to_thread(S.cfg.set_value,'fan_control.enabled',False)
+   await asyncio.to_thread(S.cfg.set_internal,'fan_control.mode','firmware')
   return ok
 
  # ---- профили ---------------------------------------------------------

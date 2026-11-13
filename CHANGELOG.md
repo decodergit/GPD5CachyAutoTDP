@@ -1,3 +1,12 @@
+## 3.8.0
+
+- **Fixed fan speed**, as in `tdp_gui.py`. The fan section now has a **Fan mode** selector: *Firmware*, *Curve* or *Fixed speed*. In fixed mode a slider sets 0–100 % (5 % steps); the value is applied once the slider stops moving.
+- The fixed speed is rewritten every 5 seconds (and the channel switched back to manual) in case the firmware takes the fan over.
+- **Overheat guard:** in fixed mode, from 90 °C the fan never runs slower than the curve would; the panel shows a warning while this is active. Below 90 °C the fixed speed returns.
+- The mode and fixed speed are saved (`fan_control.mode`, `fan_control.manual_pct`) and restored after a restart and after the `tdp_gui.py` window closes. Old configs migrate: curve on → *Curve*, curve off → *Firmware*.
+- New RPC `set_fan_mode(mode, pct)`; `enable_fan_control` / `disable_fan_control` keep working and update the mode.
+- Build row shows 3.8.0.
+
 ## 3.7.0
 
 Redesigned panel: less text, the important things first.

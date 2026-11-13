@@ -61,9 +61,15 @@ var AutoTDP_Plugin = (function (React, ui) {
             'lang.ru': 'Русский',
             // вентилятор
             'section.fan': 'Fan',
-            'fan.control': 'Fan curve',
-            'fan.control.on': 'The plugin drives the fan',
-            'fan.control.off': 'Firmware drives the fan',
+            'fan.mode': 'Fan mode',
+            'fan.mode.firmware': 'Firmware',
+            'fan.mode.curve': 'Curve',
+            'fan.mode.manual': 'Fixed speed',
+            'fan.mode.desc.firmware': 'The firmware drives the fan',
+            'fan.mode.desc.curve': 'Speed follows the temperature curve',
+            'fan.mode.desc.manual': 'Constant speed; at high temperature not below the curve',
+            'fan.manual': 'Fan speed',
+            'fan.safety': 'Above {0} °C: speed raised to the curve value',
             'fan.caption': '{0} °C · {1} % · {2} rpm',
             'fan.notDetected': 'PWM fan controller not detected.',
             // диагностика
@@ -117,6 +123,7 @@ var AutoTDP_Plugin = (function (React, ui) {
             'err.toggle': 'Could not switch Auto TDP',
             'err.plugin': 'Could not switch the plugin',
             'err.lang': 'Could not save the language',
+            'err.fan': 'Could not switch the fan mode: {0}',
         },
         ru: {
             'unit.w': 'Вт',
@@ -169,9 +176,15 @@ var AutoTDP_Plugin = (function (React, ui) {
             'lang.en': 'English',
             'lang.ru': 'Русский',
             'section.fan': 'Вентилятор',
-            'fan.control': 'Кривая вентилятора',
-            'fan.control.on': 'Вентилятором управляет плагин',
-            'fan.control.off': 'Вентилятором управляет прошивка',
+            'fan.mode': 'Режим вентилятора',
+            'fan.mode.firmware': 'Прошивка',
+            'fan.mode.curve': 'Кривая',
+            'fan.mode.manual': 'Фиксированная скорость',
+            'fan.mode.desc.firmware': 'Вентилятором управляет прошивка',
+            'fan.mode.desc.curve': 'Скорость по кривой температуры',
+            'fan.mode.desc.manual': 'Постоянная скорость; при перегреве не ниже кривой',
+            'fan.manual': 'Скорость вентилятора',
+            'fan.safety': 'Выше {0} °C: скорость поднята до значения кривой',
             'fan.caption': '{0} °C · {1} % · {2} об/мин',
             'fan.notDetected': 'Контроллер PWM-вентилятора не обнаружен.',
             'row.build': 'Сборка',
@@ -222,6 +235,7 @@ var AutoTDP_Plugin = (function (React, ui) {
             'err.toggle': 'Не удалось переключить Auto TDP',
             'err.plugin': 'Не удалось переключить плагин',
             'err.lang': 'Не удалось сохранить язык',
+            'err.fan': 'Не удалось переключить режим вентилятора: {0}',
         },
     };
     // Подстановка {0}, {1}, ...
@@ -539,7 +553,7 @@ var AutoTDP_Plugin = (function (React, ui) {
     const DEFAULT_CONFIG = {
         plugin_enabled: true, enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false, language: 'auto',
         check_interval_sec: 1, hysteresis_threshold: 5,
-        fan_control: { enabled: true },
+        fan_control: { enabled: true, mode: 'curve', manual_pct: 50 },
     };
     const LOOKS_LIKE_CONFIG = ['enabled', 'target_fps', 'min_tdp', 'max_tdp', 'initial_tdp', 'fan_control'];
     const looksLikeConfig = (o) => LOOKS_LIKE_CONFIG.filter(k => Object.prototype.hasOwnProperty.call(o, k)).length >= 2;
@@ -714,6 +728,25 @@ var AutoTDP_Plugin = (function (React, ui) {
                 arr.sort((a, b) => a.t - b.t);
                 return arr.length ? arr : [{ t: 50, s: 20 }, { t: 95, s: 100 }];
             };
+            // Режим вентилятора: firmware | curve | manual. Старые конфиги без mode — по enabled.
+            const fc = cfg.fan_control || {};
+            const fanMode = ['firmware', 'curve', 'manual'].includes(fc.mode) ? fc.mode : (fc.enabled === false ? 'firmware' : 'curve');
+            const manualPct = Math.round(safeNum(fc.manual_pct, 50));
+            const setFanMode = async (mode, pct) => {
+                setCfg((x) => ({ ...x, fan_control: { ...x.fan_control, mode, enabled: mode !== 'firmware', ...(pct != null ? { manual_pct: pct } : {}) } }));
+                const res = await rpc('set_fan_mode', pct != null ? { mode, pct } : { mode });
+                if (!res || !res.ok)
+                    setError(tr('err.fan', (res && res.error) || '?'));
+                await refresh();
+            };
+            const setManualDebounced = (pct) => {
+                setCfg((x) => ({ ...x, fan_control: { ...x.fan_control, manual_pct: pct } }));
+                const old = pendingTimers.current.fan;
+                if (old)
+                    clearTimeout(old);
+                refreshBlockedUntil.current = Date.now() + 900;
+                pendingTimers.current.fan = setTimeout(() => setFanMode('manual', pct), 300);
+            };
             const target = safeNum(cfg.target_fps, 40);
             const minTdp = safeNum(cfg.min_tdp, 15);
             const maxTdp = Math.min(80, safeNum(cfg.max_tdp, 80));
@@ -796,13 +829,17 @@ var AutoTDP_Plugin = (function (React, ui) {
                         React.createElement("span", { style: { color: COLORS.dim, fontSize: 13 } }, tr('fan.notDetected'))),
                     f.available && React.createElement(React.Fragment, null,
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.ToggleField, { label: tr('fan.control'), checked: !!cfg.fan_control?.enabled, description: cfg.fan_control?.enabled ? tr('fan.control.on') : tr('fan.control.off'), onChange: async (v) => { const ok = await rpc(v ? 'enable_fan_control' : 'disable_fan_control'); if (ok)
-                                    await refresh(); } })),
+                            React.createElement(ui.DropdownItem, { label: tr('fan.mode'), description: tr('fan.mode.desc.' + fanMode), selectedOption: fanMode, rgOptions: [{ data: 'firmware', label: tr('fan.mode.firmware') }, { data: 'curve', label: tr('fan.mode.curve') }, { data: 'manual', label: tr('fan.mode.manual') }], onChange: (o) => { if (o.data !== fanMode)
+                                    setFanMode(o.data, o.data === 'manual' ? manualPct : undefined); } })),
+                        fanMode === 'manual' && React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(ui.SliderField, { label: tr('fan.manual'), value: manualPct, min: 0, max: 100, step: 5, showValue: true, valueSuffix: "%", onChange: (v) => setManualDebounced(v) })),
+                        fanMode === 'manual' && f.safety_active && React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(Banner, { tone: "warn", text: tr('fan.safety', safeNum(f.safety_temp, 90)) })),
                         React.createElement(ui.PanelSectionRow, null,
                             React.createElement("div", { style: { width: '100%' } },
-                                React.createElement(CurveGraph, { points: curveFromConfig(cfg), height: 140, now: { t: temp, s: pwm } }),
+                                fanMode === 'curve' && React.createElement(CurveGraph, { points: curveFromConfig(cfg), height: 140, now: { t: temp, s: pwm } }),
                                 React.createElement("div", { style: { fontSize: 12, color: COLORS.tdp, textAlign: 'right', marginTop: 2 } }, tr('fan.caption', temp != null ? temp.toFixed(0) : '—', pwm != null ? pwm.toFixed(0) : '—', rpm != null ? rpm : '—')))),
-                        React.createElement(ui.PanelSectionRow, null,
+                        fanMode === 'curve' && React.createElement(ui.PanelSectionRow, null,
                             React.createElement(ui.ButtonItem, { layout: "below", onClick: () => {
                                     const lang = cfg.language;
                                     setCurveMsg('');
