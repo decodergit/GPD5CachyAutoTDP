@@ -303,9 +303,9 @@ class Plugin:
 
  @_safe(False, 'set_language')
  async def set_language(self,language):
-  """Сохраняет язык интерфейса (en|ru) в config.json. Неизвестный язык отклоняется."""
+  """Сохраняет язык интерфейса (auto|en|ru) в config.json. auto — язык Steam. Неизвестный язык отклоняется."""
   if S.cfg is None: return False
-  if language not in ('en','ru'): return False
+  if language not in ('auto','en','ru'): return False
   return bool(await asyncio.to_thread(S.cfg.set_value,'language',language))
 
  @_safe(False, 'set_plugin_enabled')
@@ -334,7 +334,7 @@ class Plugin:
   def _stats():
    r={'tdp':S.tdp.stats() if S.tdp else {'backend':'none'},
       'fan':S.fan.get_stats() if S.fan else {'available':False},
-      'epp_ok':S.epp is not None,'build':'3.6.0','init_errors':list(S.init_errors),
+      'epp_ok':S.epp is not None,'build':'3.7.0','init_errors':list(S.init_errors),
       'plugin_enabled':_master_enabled(),'active':S.active,'gui_pid':S.suspended_for}
    if S.epp: r.update(S.epp.get_current_stats())
    r['monitor']=S.monitor.get_stats() if S.monitor else {'state':'stopped'}

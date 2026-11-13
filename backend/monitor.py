@@ -11,6 +11,7 @@
 import logging
 import threading
 import time
+from collections import deque
 from typing import Any
 
 from .tdp_controller import TDPController
@@ -67,6 +68,10 @@ class TDPMonitor:
         self.fps_ctl.on_level = self._save_levels
         self.tdp_hold_level = None
         self.tdp_decision = ''
+        # Для интерфейса (3.7.0): история за последнюю минуту и короткая фаза решения.
+        # holding | raising | lowering | probing | short | boost | waiting
+        self.history = deque(maxlen=240)   # (time.time(), fps, tdp)
+        self.phase = ''
         self._stats = {'adjustments_made': 0, 'errors': 0, 'last_error': None,
                        'total_runtime_sec': 0, 'load_boosts_made': 0}
 
@@ -86,6 +91,8 @@ class TDPMonitor:
             self.target_fps = int(target_fps)
             self._sync_bounds()
             self.fps_ctl.reset()
+            self.history.clear()
+            self.phase = ''
             self._game_checked = -1e9
             self._update_game()
             cur = self.tdp.current_w
@@ -260,6 +267,7 @@ class TDPMonitor:
                     if self.state != self.STATE_WAITING or self._waiting_since is None:
                         self._waiting_since = time.monotonic()
                     self.state = self.STATE_WAITING
+                    self.phase = 'waiting'
                 else:
                     self._waiting_since = None
                     cur = float(self.last_tdp)
@@ -284,6 +292,7 @@ class TDPMonitor:
                                 last_boost = now
                         self.tdp_hold_level = ceil
                         self.tdp_decision = 'load boost' if target > cur + 0.5 else 'load boost: потолок плато'
+                        self.phase = 'boost'
                     else:
                         self.fps_ctl.observe(now, fps)
                         new_w = self.fps_ctl.decide(now, cur, effective)
@@ -293,6 +302,8 @@ class TDPMonitor:
                                 # Изменение обрезано границей — проба плато не должна считать его состоявшимся.
                                 self.fps_ctl.cancel_probe()
                         self.tdp_hold_level = self.fps_ctl.ceiling_now(now)
+                        self.phase = self._phase(cur, new_w, fps, effective)
+                    self.history.append((now, float(fps), float(self.last_tdp)))
                     self.state = self.STATE_RUNNING
                 self._stats['total_runtime_sec'] = int(time.time() - started)
             except Exception as e:
@@ -301,6 +312,27 @@ class TDPMonitor:
                 self._stats['last_error'] = str(e)
                 self.state = self.STATE_ERROR
             self._stop.wait(float(self.cfg.get_value('check_interval_sec', 1)))
+
+    def _phase(self, cur, new_w, fps, goal):
+        if new_w > cur + 0.5:
+            return 'raising'
+        if new_w < cur - 0.5:
+            return 'lowering'
+        if self.fps_ctl.search_state().get('state') == 'probing':
+            return 'probing'
+        if fps < goal - self.fps_ctl.deadband:
+            # «Не хватает на пределе» — только если TDP упёрся в максимум или потолок плато;
+            # иначе это пауза между шагами подъёма.
+            ceil = self.fps_ctl.ceiling_now(time.time())
+            limit = min(self.max_tdp, ceil) if ceil is not None else self.max_tdp
+            return 'short' if cur >= limit - 0.5 else 'raising'
+        return 'holding'
+
+    def history_last(self, seconds=60.0):
+        """[[сколько секунд назад, fps, tdp]] за последние seconds, от старых к новым."""
+        now = time.time()
+        return [[round(now - t, 1), round(f, 1), round(w, 1)]
+                for t, f, w in list(self.history) if now - t <= seconds]
 
     def get_stats(self):
         with self._lock:
@@ -323,6 +355,8 @@ class TDPMonitor:
                 'game': self.game,
                 'game_name': self.game_name,
                 'display': self.display,
+                'phase': self.phase if self._running else 'off',
+                'history': self.history_last(),
                 'game_levels': self.fps_ctl.levels(),
                 'recall_level': self.fps_ctl.recall_level(float(self.last_tdp)) if self.last_tdp is not None else None,
                 **self._stats,

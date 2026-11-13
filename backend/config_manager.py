@@ -25,7 +25,7 @@ class ConfigManager:
     CONFIG_FILENAME = "config.json"
 
     DEFAULT_CONFIG: Dict[str, Any] = {
-        "version": "3.6.0",
+        "version": "3.7.0",
         "config_version": "3.0.0",
         "plugin_enabled": True,
         "enabled": False,
@@ -37,7 +37,7 @@ class ConfigManager:
         "load_boost_enabled": True,
         "load_boost_threshold": 95,
         "mangohud_display": False,
-        "language": "en",
+        "language": "auto",
         "enable_auto_adjust": True,
         "check_interval_sec": 1,
         "hysteresis_threshold": 5,
@@ -236,7 +236,7 @@ class ConfigManager:
             if not isinstance(value, str):
                 raise ConfigException(f"'{key}' must be a string")
             if key == "language" and value not in self.SUPPORTED_LANGUAGES:
-                raise ConfigException("language must be en or ru")
+                raise ConfigException("language must be auto, en or ru")
             return
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ConfigException(f"'{key}' must be a number")
@@ -309,11 +309,11 @@ class ConfigManager:
         self.set_internal("current_profile", name)
         return True
 
-    SUPPORTED_LANGUAGES = ("en", "ru")
+    SUPPORTED_LANGUAGES = ("auto", "en", "ru")
 
     def validate_config(self, config: Dict[str, Any]) -> Tuple[bool, str]:
         if not isinstance(config.get("enabled", False), bool): return False, "enabled must be bool"
-        if config.get("language", "en") not in self.SUPPORTED_LANGUAGES: return False, "language must be en or ru"
+        if config.get("language", "en") not in self.SUPPORTED_LANGUAGES: return False, "language must be auto, en or ru"
         if not (1 <= int(config.get("target_fps",40)) <= 120): return False, "target_fps must be 1-120"
         if float(config.get("min_tdp",15)) > float(config.get("max_tdp",80)): return False, "min_tdp must be <= max_tdp"
         return True, ""

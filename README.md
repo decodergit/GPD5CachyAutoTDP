@@ -28,7 +28,7 @@ The project is provided as-is under the MIT License. Hardware-control operations
 - **Plateau detection.** If raising the TDP no longer increases FPS, the TDP is capped at that level for a while, so the plugin does not keep spending power for nothing.
 - **Fan curve control** on the GPD WIN 5 PWM fan controller, with a temperature-to-speed curve and an in-plugin curve editor (temperature and speed per point, add and remove points, save and reset).
 - **MangoHud display switch.** Shows or hides the mangoapp overlay while keeping FPS logging active.
-- **English and Русский interface.** The language is chosen at the bottom of the screen and saved in the configuration.
+- **English and Русский interface.** By default the plugin follows the Steam language; it can be fixed under **More settings → Language** and is saved in the configuration.
 - **Poll interval** is adjustable in the interface: shorter reacts faster, at the cost of reading the MangoHud log more often.
 - **Search status.** The interface shows whether the controller is still looking for the lowest TDP, the levels it already trusts, and how many tries it made.
 - **Initialization errors** are listed in the Status section, so a missing backend or fan controller is visible without reading the log.

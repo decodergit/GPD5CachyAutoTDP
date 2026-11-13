@@ -3,192 +3,187 @@ var AutoTDP_Plugin = (function (React, ui) {
 
     // SPDX-License-Identifier: MIT
     // Copyright (c) 2026 GPD5CachyAutoTDP Contributors
-    // Словарь интерфейса (версия 2.2.0). Ключи должны совпадать для en и ru.
+    // Словарь интерфейса. Ключи должны совпадать для en и ru.
+    // 3.7.0: короткие формулировки; подробности — в README.
     const DICT = {
         en: {
-            'section.autotdp': 'Auto TDP',
-            'section.fps': 'Auto TDP / FPS',
-            'section.status': 'Status',
-            'section.fan': 'Fan curve',
-            'section.source': 'FPS source / requirements',
-            'toggle.autotdp': 'Auto TDP',
-            'toggle.running': 'Running',
-            'toggle.stopped': 'Stopped',
-            'section.plugin': 'Plugin',
+            'unit.w': 'W',
+            'status.connecting': 'Connecting to backend…',
+            // главные переключатели
             'toggle.plugin': 'Plugin enabled',
             'toggle.plugin.on': 'Controls TDP and fan',
             'toggle.plugin.off': 'Fully off: TDP and fan are not touched',
-            'toggle.plugin.gui': 'Paused: the tdp_gui.py window is open (pid {0})',
-            'err.plugin': 'Could not switch the plugin',
+            'toggle.plugin.gui': 'Paused while the tdp_gui.py window is open',
+            'toggle.autotdp': 'Auto TDP',
+            'toggle.autotdp.on': 'Holds the target FPS at the lowest TDP',
+            'toggle.autotdp.off': 'TDP stays at the start value',
+            // сводка
+            'sum.fps': 'FPS',
+            'sum.tdp': 'TDP',
+            'sum.temp': 'Temp',
+            'sum.goal': 'goal {0}',
+            'phase.holding': 'Holding the target',
+            'phase.raising': 'Raising TDP: FPS is short',
+            'phase.lowering': 'Lowering TDP: FPS to spare',
+            'phase.probing': 'Looking for the lowest TDP',
+            'phase.short': 'FPS is short at the TDP limit',
+            'phase.boost': 'High-load boost',
+            'phase.waiting': 'Waiting for FPS from MangoHud',
+            'phase.off': 'Auto TDP is off',
+            'chart.legend': 'last minute',
+            'game.levels': 'levels {0} W',
+            'game.unknown': 'Game not detected',
+            'display.handheld': 'handheld {0}',
+            'display.external': 'external {0}',
+            'warn.noFps': 'No FPS from MangoHud. Keep MangoHud enabled and turn FPS limits off in the game and in gamescope.',
+            // настройки
+            'slider.targetFps': 'Target FPS',
+            'fold.limits': 'TDP limits · {0}–{1} W',
+            'fold.advanced': 'More settings',
+            'fold.diag': 'Diagnostics',
+            'slider.minTdp': 'Minimum TDP',
+            'slider.maxTdp': 'Maximum TDP',
+            'slider.startTdp': 'Start TDP',
+            'slider.startTdp.on': 'Used when Auto TDP starts',
+            'slider.startTdp.off': 'Applied now: Auto TDP is off',
+            'toggle.loadBoost': 'High-load boost',
+            'toggle.loadBoost.on': 'CPU >{0}% always, GPU >{0}% when FPS is short',
+            'toggle.loadBoost.off': 'Off',
+            'slider.threshold': 'High-load threshold',
+            'slider.interval': 'Poll interval',
+            'slider.interval.desc': '1 s is a good default',
+            'src.hud': 'Show MangoHud',
+            'src.hud.on': 'Overlay visible',
+            'src.hud.off': 'Overlay hidden, FPS is still logged',
+            'lang.title': 'Language',
+            'lang.auto': 'Auto (Steam language)',
+            'lang.en': 'English',
+            'lang.ru': 'Русский',
+            // вентилятор
+            'section.fan': 'Fan',
+            'fan.control': 'Fan curve',
+            'fan.control.on': 'The plugin drives the fan',
+            'fan.control.off': 'Firmware drives the fan',
+            'fan.caption': '{0} °C · {1} % · {2} rpm',
+            'fan.notDetected': 'PWM fan controller not detected.',
+            // диагностика
             'row.build': 'Build',
             'row.build.old': 'old backend: reinstall the archive',
             'row.tdpBackend': 'TDP backend',
-            'row.currentTdp': 'Current TDP',
             'row.tdpSource': 'TDP source',
-            'row.tdpSource.setpoint': 'setpoint (ryzenadj readback unavailable)',
-            'row.avgFps': 'Average FPS',
-            'row.effectiveGoal': 'Effective FPS goal',
+            'row.tdpSource.setpoint': 'setpoint (no readback)',
             'row.tdpDecision': 'TDP decision',
             'row.tdpCapped': 'capped at {0} W',
-            'row.game': 'Game',
-            'row.game.unknown': 'not detected (shared stats)',
-            'row.display': 'Display mode',
-            'row.display.handheld': 'handheld {0}',
-            'row.display.external': 'external {0}',
-            'row.display.unknown': 'not detected',
-            'row.levels': 'Working TDP levels',
-            'row.levels.none': 'not learned yet',
-            'row.minSearch': 'Minimum TDP search',
-            'row.minSearch.value': '{0} W (probes: {1})',
-            'fan.target': 'Fan target',
-            'fan.applied': 'Fan applied',
-            'fan.sensors': 'Temperature sensors',
-            'row.cpuLoad': 'CPU load',
-            'row.gpuLoad': 'GPU load',
             'row.controller': 'Controller',
             'row.controller.stopped': 'stopped',
-            'slider.targetFps': 'Target FPS',
-            'slider.startTdp': 'Start TDP',
-            'slider.startTdp.on': 'Used when Auto TDP starts',
-            'slider.startTdp.off': 'Applied when Auto TDP is switched off',
-            'slider.minTdp': 'Minimum TDP',
-            'slider.maxTdp': 'Maximum TDP',
-            'slider.threshold': 'High-load threshold',
-            'toggle.loadBoost': 'High-load TDP boost',
-            'toggle.loadBoost.on': 'CPU >{0}% boosts TDP even when FPS is already on target; GPU >{0}% boosts only when FPS is below target',
-            'toggle.loadBoost.off': 'Disabled',
-            'fan.controller': 'Controller',
-            'fan.controller.ok': 'gpdfan / PWM',
-            'fan.controller.none': 'not detected',
-            'fan.temp': 'Temperature',
-            'fan.channels': 'Channels',
-            'fan.rpm': 'Fan RPM',
-            'fan.pwm': 'PWM',
-            'fan.control': 'Fan control',
-            'fan.control.on': 'Curve enabled',
-            'fan.control.off': 'Curve disabled',
-            'fan.notDetected': 'PWM fan controller not detected.',
-            'src.note': 'Keep system MangoHud enabled. For correct AutoTDP behavior, disable FPS limits both in the game and in the system/gamescope. The plugin needs uncapped FPS to see the real performance headroom.',
-            'src.source': 'Source',
-            'src.sourceDefault': 'MangoHud / mangoapp CSV',
-            'src.hud': 'MangoHud display',
-            'src.hud.on': 'HUD visible',
-            'src.hud.off': 'HUD hidden (logging remains active)',
-            'search.title': 'TDP search',
-            'search.state': 'Search state',
+            'search.state': 'Search',
             'search.state.idle': 'not started',
             'search.state.probing': 'testing a level',
             'search.state.searching': 'narrowing the range',
             'search.state.done': 'minimum found',
-            'search.good': 'Holds the goal at',
-            'search.bad': 'Below the goal at',
+            'search.good': 'Holds the target at',
+            'search.bad': 'Short of the target at',
             'search.probes': 'Tries',
             'search.unknown': '—',
-            'init.title': 'Initialization errors',
-            'curve.title': 'Fan curve editor',
+            'row.cpuLoad': 'CPU load',
+            'row.gpuLoad': 'GPU load',
+            'src.source': 'FPS source',
+            'src.sourceDefault': 'MangoHud CSV',
+            'fan.controller': 'Fan controller',
+            'fan.controller.ok': 'gpdfan, {0} channel(s)',
+            'fan.controller.none': 'not detected',
+            // редактор кривой
+            'curve.title': 'Fan curve',
             'curve.temp': 'Temp, °C',
             'curve.speed': 'Speed, %',
-            'curve.point': 'Point {0}',
-            'curve.add': 'Add point',
-            'curve.remove': 'Remove last point',
-            'curve.save': 'Save curve',
-            'curve.reset': 'Reset to default',
-            'curve.saved': 'Curve saved',
-            'curve.saveFail': 'Curve rejected: {0}',
-            'curve.hint': 'Temperatures 20–110 °C, speed 0–100 %. Speed must not fall as temperature rises.',
             'curve.edit': 'Edit curve',
-            'curve.graphHint': 'Drag a point to move it, tap empty space to add one. Speed cannot fall as temperature rises.',
+            'curve.graphHint': 'Drag a point to move it, tap empty space to add one.',
             'curve.prev': '◀ Point',
             'curve.next': 'Point ▶',
             'curve.selected': 'Point {0} of {1}: {2} °C → {3} %',
             'curve.delete': 'Delete point',
+            'curve.reset': 'Default curve',
+            'curve.save': 'Save',
             'curve.cancel': 'Cancel',
-            'curve.now': 'now {0} °C · {1} %',
-            'slider.interval': 'Poll interval',
-            'slider.interval.desc': 'How often FPS is read and TDP may change. Shorter reacts faster but reads the log more often; 1 s is a good default.',
-            'lang.title': 'Language',
-            'lang.en': 'English',
-            'lang.ru': 'Русский',
-            'status.connecting': 'Connecting to backend…',
-            'err.getConfig': 'Backend RPC get_config returned an invalid response: {0}',
-            'err.getStats': 'Backend RPC get_stats does not respond',
-            'err.backend': 'AutoTDP backend: {0}',
+            'curve.saved': 'Curve saved',
+            'curve.saveFail': 'Curve rejected: {0}',
+            // ошибки
+            'init.title': 'Initialization error',
+            'err.getConfig': 'Backend returned an invalid config: {0}',
+            'err.getStats': 'Backend does not respond',
+            'err.backend': 'Backend: {0}',
             'err.save': 'Backend did not accept the change',
-            'err.params': 'Backend did not accept AutoTDP parameters',
-            'err.toggle': 'Could not change AutoTDP state',
+            'err.params': 'Backend did not accept the Auto TDP settings',
+            'err.toggle': 'Could not switch Auto TDP',
+            'err.plugin': 'Could not switch the plugin',
             'err.lang': 'Could not save the language',
         },
         ru: {
-            'section.autotdp': 'Auto TDP',
-            'section.fps': 'Auto TDP / FPS',
-            'section.status': 'Статус',
-            'section.fan': 'Кривая вентилятора',
-            'section.source': 'Источник FPS / требования',
-            'toggle.autotdp': 'Auto TDP',
-            'toggle.running': 'Работает',
-            'toggle.stopped': 'Остановлен',
-            'section.plugin': 'Плагин',
+            'unit.w': 'Вт',
+            'status.connecting': 'Подключение к backend…',
             'toggle.plugin': 'Плагин включён',
             'toggle.plugin.on': 'Управляет TDP и вентилятором',
             'toggle.plugin.off': 'Полностью отключён: TDP и вентилятор не трогаются',
-            'toggle.plugin.gui': 'Приостановлен: открыто окно tdp_gui.py (pid {0})',
-            'err.plugin': 'Не удалось переключить плагин',
+            'toggle.plugin.gui': 'Приостановлен, пока открыто окно tdp_gui.py',
+            'toggle.autotdp': 'Auto TDP',
+            'toggle.autotdp.on': 'Держит целевой FPS на минимальном TDP',
+            'toggle.autotdp.off': 'TDP стоит на стартовом значении',
+            'sum.fps': 'FPS',
+            'sum.tdp': 'TDP',
+            'sum.temp': 'Темп.',
+            'sum.goal': 'цель {0}',
+            'phase.holding': 'Цель держится',
+            'phase.raising': 'Поднимает TDP: не хватает кадров',
+            'phase.lowering': 'Снижает TDP: есть запас кадров',
+            'phase.probing': 'Ищет минимальный TDP',
+            'phase.short': 'Не хватает кадров на пределе TDP',
+            'phase.boost': 'Буст при высокой нагрузке',
+            'phase.waiting': 'Ждёт FPS от MangoHud',
+            'phase.off': 'Auto TDP выключен',
+            'chart.legend': 'последняя минута',
+            'game.levels': 'уровни {0} Вт',
+            'game.unknown': 'Игра не определена',
+            'display.handheld': 'в руках {0}',
+            'display.external': 'внешний экран {0}',
+            'warn.noFps': 'Нет FPS от MangoHud. Оставьте MangoHud включённым и снимите ограничение FPS в игре и в gamescope.',
+            'slider.targetFps': 'Целевой FPS',
+            'fold.limits': 'Лимиты TDP · {0}–{1} Вт',
+            'fold.advanced': 'Дополнительно',
+            'fold.diag': 'Диагностика',
+            'slider.minTdp': 'Минимальный TDP',
+            'slider.maxTdp': 'Максимальный TDP',
+            'slider.startTdp': 'Стартовый TDP',
+            'slider.startTdp.on': 'С него начинает Auto TDP',
+            'slider.startTdp.off': 'Применяется сразу: Auto TDP выключен',
+            'toggle.loadBoost': 'Буст при высокой нагрузке',
+            'toggle.loadBoost.on': 'CPU >{0}% всегда, GPU >{0}% при нехватке FPS',
+            'toggle.loadBoost.off': 'Выключен',
+            'slider.threshold': 'Порог высокой нагрузки',
+            'slider.interval': 'Интервал опроса',
+            'slider.interval.desc': '1 с — хороший выбор',
+            'src.hud': 'Показывать MangoHud',
+            'src.hud.on': 'Оверлей виден',
+            'src.hud.off': 'Оверлей скрыт, FPS пишется в лог',
+            'lang.title': 'Язык',
+            'lang.auto': 'Авто (язык Steam)',
+            'lang.en': 'English',
+            'lang.ru': 'Русский',
+            'section.fan': 'Вентилятор',
+            'fan.control': 'Кривая вентилятора',
+            'fan.control.on': 'Вентилятором управляет плагин',
+            'fan.control.off': 'Вентилятором управляет прошивка',
+            'fan.caption': '{0} °C · {1} % · {2} об/мин',
+            'fan.notDetected': 'Контроллер PWM-вентилятора не обнаружен.',
             'row.build': 'Сборка',
             'row.build.old': 'старый backend: переустановите архив',
             'row.tdpBackend': 'Бэкенд TDP',
-            'row.currentTdp': 'Текущий TDP',
             'row.tdpSource': 'Источник TDP',
-            'row.tdpSource.setpoint': 'заданное значение (чтение ryzenadj недоступно)',
-            'row.avgFps': 'Средний FPS',
-            'row.effectiveGoal': 'Эффективная цель FPS',
+            'row.tdpSource.setpoint': 'заданное (без чтения)',
             'row.tdpDecision': 'Решение по TDP',
             'row.tdpCapped': 'ограничено {0} Вт',
-            'row.game': 'Игра',
-            'row.game.unknown': 'не определена (общая статистика)',
-            'row.display': 'Режим экрана',
-            'row.display.handheld': 'в руках {0}',
-            'row.display.external': 'внешний экран {0}',
-            'row.display.unknown': 'не определён',
-            'row.levels': 'Рабочие уровни TDP',
-            'row.levels.none': 'пока не накоплены',
-            'row.minSearch': 'Поиск минимума TDP',
-            'row.minSearch.value': '{0} Вт (проб: {1})',
-            'fan.target': 'Цель вентилятора',
-            'fan.applied': 'Вентилятор сейчас',
-            'fan.sensors': 'Датчики температуры',
-            'row.cpuLoad': 'Загрузка CPU',
-            'row.gpuLoad': 'Загрузка GPU',
             'row.controller': 'Контроллер',
             'row.controller.stopped': 'остановлен',
-            'slider.targetFps': 'Целевой FPS',
-            'slider.startTdp': 'Стартовый TDP',
-            'slider.startTdp.on': 'Используется при запуске Auto TDP',
-            'slider.startTdp.off': 'Применяется при выключении Auto TDP',
-            'slider.minTdp': 'Минимальный TDP',
-            'slider.maxTdp': 'Максимальный TDP',
-            'slider.threshold': 'Порог высокой нагрузки',
-            'toggle.loadBoost': 'Повышение TDP при высокой нагрузке',
-            'toggle.loadBoost.on': 'CPU >{0}% повышает TDP даже когда FPS уже на цели; GPU >{0}% повышает только когда FPS ниже цели',
-            'toggle.loadBoost.off': 'Выключено',
-            'fan.controller': 'Контроллер',
-            'fan.controller.ok': 'gpdfan / PWM',
-            'fan.controller.none': 'не обнаружен',
-            'fan.temp': 'Температура',
-            'fan.channels': 'Каналы',
-            'fan.rpm': 'Обороты вентилятора',
-            'fan.pwm': 'PWM',
-            'fan.control': 'Управление вентилятором',
-            'fan.control.on': 'Кривая включена',
-            'fan.control.off': 'Кривая выключена',
-            'fan.notDetected': 'Контроллер PWM-вентилятора не обнаружен.',
-            'src.note': 'Оставьте системный MangoHud включённым. Для корректной работы Auto TDP отключите ограничение FPS и в игре, и в системе/gamescope. Плагину нужен неограниченный FPS, чтобы видеть реальный запас производительности.',
-            'src.source': 'Источник',
-            'src.sourceDefault': 'MangoHud / CSV mangoapp',
-            'src.hud': 'Отображение MangoHud',
-            'src.hud.on': 'HUD виден',
-            'src.hud.off': 'HUD скрыт (запись в лог продолжается)',
-            'search.title': 'Поиск TDP',
-            'search.state': 'Состояние поиска',
+            'search.state': 'Поиск',
             'search.state.idle': 'не начат',
             'search.state.probing': 'проверка уровня',
             'search.state.searching': 'сужение отрезка',
@@ -197,45 +192,58 @@ var AutoTDP_Plugin = (function (React, ui) {
             'search.bad': 'Ниже цели на',
             'search.probes': 'Проб',
             'search.unknown': '—',
-            'init.title': 'Ошибки инициализации',
-            'curve.title': 'Редактор кривой вентилятора',
+            'row.cpuLoad': 'Загрузка CPU',
+            'row.gpuLoad': 'Загрузка GPU',
+            'src.source': 'Источник FPS',
+            'src.sourceDefault': 'CSV MangoHud',
+            'fan.controller': 'Контроллер вентилятора',
+            'fan.controller.ok': 'gpdfan, каналов: {0}',
+            'fan.controller.none': 'не обнаружен',
+            'curve.title': 'Кривая вентилятора',
             'curve.temp': 'Температура, °C',
             'curve.speed': 'Скорость, %',
-            'curve.point': 'Точка {0}',
-            'curve.add': 'Добавить точку',
-            'curve.remove': 'Удалить последнюю точку',
-            'curve.save': 'Сохранить кривую',
-            'curve.reset': 'Сбросить к стандартной',
-            'curve.saved': 'Кривая сохранена',
-            'curve.saveFail': 'Кривая отклонена: {0}',
-            'curve.hint': 'Температура 20–110 °C, скорость 0–100 %. Скорость не должна падать с ростом температуры.',
             'curve.edit': 'Изменить кривую',
-            'curve.graphHint': 'Перетащите точку, чтобы сдвинуть её; коснитесь пустого места, чтобы добавить. Скорость не может падать с ростом температуры.',
+            'curve.graphHint': 'Перетащите точку, чтобы сдвинуть её; коснитесь пустого места, чтобы добавить.',
             'curve.prev': '◀ Точка',
             'curve.next': 'Точка ▶',
             'curve.selected': 'Точка {0} из {1}: {2} °C → {3} %',
             'curve.delete': 'Удалить точку',
+            'curve.reset': 'Стандартная кривая',
+            'curve.save': 'Сохранить',
             'curve.cancel': 'Отмена',
-            'curve.now': 'сейчас {0} °C · {1} %',
-            'slider.interval': 'Интервал опроса',
-            'slider.interval.desc': 'Как часто читается FPS и может меняться TDP. Меньше — быстрее реакция, но чаще чтение лога; 1 с — разумный выбор.',
-            'lang.title': 'Язык',
-            'lang.en': 'English',
-            'lang.ru': 'Русский',
-            'status.connecting': 'Подключение к backend…',
-            'err.getConfig': 'Backend RPC get_config вернул неверный ответ: {0}',
-            'err.getStats': 'Backend RPC get_stats не отвечает',
-            'err.backend': 'AutoTDP backend: {0}',
+            'curve.saved': 'Кривая сохранена',
+            'curve.saveFail': 'Кривая отклонена: {0}',
+            'init.title': 'Ошибка инициализации',
+            'err.getConfig': 'Backend вернул неверный конфиг: {0}',
+            'err.getStats': 'Backend не отвечает',
+            'err.backend': 'Backend: {0}',
             'err.save': 'Backend не принял изменение',
-            'err.params': 'Backend не принял параметры AutoTDP',
-            'err.toggle': 'Не удалось изменить состояние AutoTDP',
+            'err.params': 'Backend не принял настройки Auto TDP',
+            'err.toggle': 'Не удалось переключить Auto TDP',
+            'err.plugin': 'Не удалось переключить плагин',
             'err.lang': 'Не удалось сохранить язык',
         },
     };
     // Подстановка {0}, {1}, ...
     const format = (s, args) => s.replace(/\{(\d+)\}/g, (_, i) => (args[Number(i)] !== undefined ? String(args[Number(i)]) : ''));
+    /** Язык Steam для режима auto: LocalizationManager клиента, иначе язык браузера CEF. */
+    const steamLang = () => {
+        try {
+            const w = typeof window !== 'undefined' ? window : {};
+            const locales = w.LocalizationManager && w.LocalizationManager.m_rgLocalesToUse;
+            const first = Array.isArray(locales) && locales.length ? String(locales[0]).toLowerCase() : '';
+            if (first)
+                return first.startsWith('russian') || first.startsWith('ru') ? 'ru' : 'en';
+            const nav = typeof navigator !== 'undefined' ? String(navigator.language || '').toLowerCase() : '';
+            return nav.startsWith('ru') ? 'ru' : 'en';
+        }
+        catch {
+            return 'en';
+        }
+    };
+    const resolveLang = (lang) => lang === 'ru' ? 'ru' : lang === 'en' ? 'en' : steamLang();
     const translate = (lang, key, ...args) => {
-        const l = lang === 'ru' ? 'ru' : 'en';
+        const l = resolveLang(lang);
         const s = DICT[l][key] ?? DICT.en[key] ?? key;
         return format(s, args);
     };
@@ -445,9 +453,92 @@ var AutoTDP_Plugin = (function (React, ui) {
 
     // SPDX-License-Identifier: MIT
     // Copyright (c) 2026 GPD5CachyAutoTDP Contributors
+    //
+    // Элементы панели (3.7.0): сводка, строка состояния, график за минуту,
+    // сворачиваемые блоки и компактные строки диагностики.
+    const COLORS = {
+        text: '#dcdedf',
+        dim: '#8b929a',
+        accent: '#1a9fff',
+        tdp: '#ffb347',
+        ok: '#5ba32b',
+        warn: '#e5b13a',
+        bad: '#e35e5e',
+        card: 'rgba(255,255,255,0.05)',
+    };
+    function Tiles({ tiles }) {
+        return (React.createElement("div", { style: { display: 'flex', gap: 6, width: '100%' } }, tiles.map((t, i) => (React.createElement("div", { key: i, style: { flex: 1, background: COLORS.card, borderRadius: 6, padding: '6px 4px', textAlign: 'center', minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 11, color: COLORS.dim, textTransform: 'uppercase', letterSpacing: 0.5 } }, t.label),
+            React.createElement("div", { style: { fontSize: 22, fontWeight: 600, color: t.color || COLORS.text, lineHeight: '26px' } }, t.value),
+            React.createElement("div", { style: { fontSize: 11, color: COLORS.dim, minHeight: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, t.sub || ''))))));
+    }
+    function StatusLine({ text, tone }) {
+        const color = tone === 'ok' ? COLORS.ok : tone === 'warn' ? COLORS.warn : tone === 'bad' ? COLORS.bad : COLORS.dim;
+        return (React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: COLORS.text, marginTop: 6 } },
+            React.createElement("span", { style: { width: 8, height: 8, borderRadius: 4, background: color, flex: 'none' } }),
+            React.createElement("span", null, text)));
+    }
+    function HistoryChart({ history, goal, maxTdp, legend, unitW }) {
+        const W = 300, H = 64, SPAN = 60;
+        const pts = (history || []).filter(p => Array.isArray(p) && p[0] <= SPAN);
+        if (pts.length < 2)
+            return null;
+        const fpsMax = Math.max(goal ? goal * 1.5 : 60, ...pts.map(p => p[1])) * 1.05;
+        const tdpMax = Math.max(maxTdp, ...pts.map(p => p[2]));
+        const x = (age) => W - age / SPAN * W;
+        const yF = (f) => H - 2 - Math.min(f, fpsMax) / fpsMax * (H - 4);
+        const yW = (w) => H - 2 - Math.min(w, tdpMax) / tdpMax * (H - 4);
+        const line = (sel) => pts.map(p => `${x(p[0]).toFixed(1)},${sel(p).toFixed(1)}`).join(' ');
+        const last = pts[pts.length - 1];
+        return (React.createElement("div", { style: { marginTop: 6 } },
+            React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", style: { display: 'block', background: 'rgba(0,0,0,0.25)', borderRadius: 4 } },
+                goal != null && React.createElement("line", { x1: 0, x2: W, y1: yF(goal), y2: yF(goal), stroke: COLORS.accent, strokeOpacity: 0.5, strokeDasharray: "4 3" }),
+                React.createElement("polyline", { points: line(p => yW(p[2])), fill: "none", stroke: COLORS.tdp, strokeWidth: 1.8, strokeLinejoin: "round" }),
+                React.createElement("polyline", { points: line(p => yF(p[1])), fill: "none", stroke: COLORS.accent, strokeWidth: 1.8, strokeLinejoin: "round" })),
+            React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: COLORS.dim, marginTop: 2 } },
+                React.createElement("span", null,
+                    React.createElement("span", { style: { color: COLORS.accent } },
+                        "\u2501 FPS ",
+                        last[1].toFixed(0)),
+                    '  ',
+                    React.createElement("span", { style: { color: COLORS.tdp } },
+                        "\u2501 TDP ",
+                        last[2].toFixed(0),
+                        " ",
+                        unitW)),
+                React.createElement("span", null, legend))));
+    }
+    // --- сворачиваемые блоки ---------------------------------------------------------------
+    // Состояние раскрытия живёт, пока плагин загружен: при повторном открытии меню
+    // блоки остаются такими, какими их оставили.
+    const OPEN = {};
+    function useFold(id) {
+        const [open, setOpen] = React.useState(!!OPEN[id]);
+        return [open, () => { OPEN[id] = !open; setOpen(!open); }];
+    }
+    function FoldHeader({ title, open, onToggle }) {
+        return (React.createElement(ui.PanelSectionRow, null,
+            React.createElement(ui.ButtonItem, { layout: "below", onClick: onToggle },
+                React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', width: '100%' } },
+                    React.createElement("span", null, title),
+                    React.createElement("span", { style: { color: COLORS.dim } }, open ? '▴' : '▾')))));
+    }
+    // --- строки --------------------------------------------------------------------------------
+    function InfoRow({ label, value }) {
+        return (React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, padding: '2px 0' } },
+            React.createElement("span", { style: { color: COLORS.dim } }, label),
+            React.createElement("span", { style: { textAlign: 'right', wordBreak: 'break-word' } }, value == null || value === '' ? '—' : String(value))));
+    }
+    function Banner({ text, tone = 'bad' }) {
+        const color = tone === 'warn' ? COLORS.warn : COLORS.bad;
+        return (React.createElement("div", { style: { borderLeft: `3px solid ${color}`, background: 'rgba(255,255,255,0.04)', padding: '6px 8px', fontSize: 12, color: COLORS.text, borderRadius: 3 } }, text));
+    }
+
+    // SPDX-License-Identifier: MIT
+    // Copyright (c) 2026 GPD5CachyAutoTDP Contributors
     const DEFAULT_CONFIG = {
-        plugin_enabled: true, enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false, language: 'en',
-        check_interval_sec: 3, hysteresis_threshold: 5,
+        plugin_enabled: true, enabled: false, target_fps: 40, min_tdp: 15, max_tdp: 80, initial_tdp: 35, load_boost_enabled: true, load_boost_threshold: 95, mangohud_display: false, language: 'auto',
+        check_interval_sec: 1, hysteresis_threshold: 5,
         fan_control: { enabled: true },
     };
     const LOOKS_LIKE_CONFIG = ['enabled', 'target_fps', 'min_tdp', 'max_tdp', 'initial_tdp', 'fan_control'];
@@ -490,10 +581,11 @@ var AutoTDP_Plugin = (function (React, ui) {
         const n = Number(v);
         return Number.isFinite(n) ? n : fallback;
     };
-    const Row = ({ label, value }) => (React.createElement(ui.PanelSectionRow, null,
-        React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', width: '100%', gap: 12 } },
-            React.createElement("span", null, label),
-            React.createElement("span", { style: { fontFamily: 'monospace' } }, value == null ? '—' : String(value)))));
+    const PHASE_TONE = {
+        holding: 'ok', lowering: 'ok', probing: 'ok',
+        raising: 'warn', boost: 'warn', waiting: 'warn',
+        short: 'bad', off: 'dim',
+    };
     function makeContent(serverAPI) {
         const rpc = async (method, args = {}) => {
             try {
@@ -512,6 +604,9 @@ var AutoTDP_Plugin = (function (React, ui) {
             const [stats, setStats] = React.useState(null);
             const [error, setError] = React.useState('');
             const [curveMsg, setCurveMsg] = React.useState('');
+            const [limitsOpen, toggleLimits] = useFold('limits');
+            const [advOpen, toggleAdv] = useFold('advanced');
+            const [diagOpen, toggleDiag] = useFold('diag');
             const tr = (key, ...args) => translate(cfg && cfg.language, key, ...args);
             const pendingTimers = React.useRef({});
             const refreshBlockedUntil = React.useRef(0);
@@ -543,7 +638,7 @@ var AutoTDP_Plugin = (function (React, ui) {
                 return () => clearInterval(timer);
             }, []);
             if (!cfg)
-                return React.createElement(ui.PanelSection, { title: tr('section.fps') },
+                return React.createElement(ui.PanelSection, null,
                     React.createElement(ui.PanelSectionRow, null,
                         React.createElement("span", null, error || tr('status.connecting'))));
             const save = async (key, value) => {
@@ -578,7 +673,7 @@ var AutoTDP_Plugin = (function (React, ui) {
                 }, 250);
             };
             const enabled = !!cfg.enabled;
-            const toggle = async (value) => {
+            const toggleAuto = async (value) => {
                 const ok = value
                     ? await rpc('start_monitor', { min_tdp: safeNum(cfg.min_tdp, 15), max_tdp: safeNum(cfg.max_tdp, 80), target_fps: safeNum(cfg.target_fps, 40), enable_auto: true })
                     : await rpc('stop_monitor');
@@ -600,23 +695,20 @@ var AutoTDP_Plugin = (function (React, ui) {
                     setError(tr('err.plugin'));
                 await refresh();
             };
-            const pluginDesc = !pluginEnabled ? tr('toggle.plugin.off')
-                : guiPid ? tr('toggle.plugin.gui', guiPid)
-                    : tr('toggle.plugin.on');
             const t = (stats && stats.tdp) || {};
             const m = (stats && stats.monitor) || {};
             const f = (stats && stats.fan) || {};
+            const W = tr('unit.w');
             const curveFromConfig = (c) => {
                 const cur = (c && c.fan_control && c.fan_control.curve) || {};
                 const byTemp = {};
                 Object.keys(cur).forEach((k) => {
-                    const t = Number(k), s = Number(cur[k]);
-                    if (!Number.isFinite(t) || !Number.isFinite(s))
+                    const tt = Number(k), s = Number(cur[k]);
+                    if (!Number.isFinite(tt) || !Number.isFinite(s))
                         return;
-                    // Если в конфиге по одной температуре оказалось несколько значений (старый формат,
-                    // ручная правка), оставляем МАКСИМУМ: выше скорость — безопаснее, и это убирает
-                    // визуальные «дубли» точек.
-                    byTemp[t] = byTemp[t] === undefined ? Math.max(0, Math.min(100, s)) : Math.max(byTemp[t], Math.max(0, Math.min(100, s)));
+                    // Несколько значений на одну температуру (старый формат, ручная правка):
+                    // оставляем максимум — выше скорость безопаснее.
+                    byTemp[tt] = byTemp[tt] === undefined ? Math.max(0, Math.min(100, s)) : Math.max(byTemp[tt], Math.max(0, Math.min(100, s)));
                 });
                 const arr = Object.keys(byTemp).map((k) => ({ t: Number(k), s: byTemp[Number(k)] }));
                 arr.sort((a, b) => a.t - b.t);
@@ -626,113 +718,140 @@ var AutoTDP_Plugin = (function (React, ui) {
             const minTdp = safeNum(cfg.min_tdp, 15);
             const maxTdp = Math.min(80, safeNum(cfg.max_tdp, 80));
             const initialTdp = safeNum(cfg.initial_tdp, 35);
+            // --- сводка
+            const goal = m.effective_target_fps != null ? safeNum(m.effective_target_fps, 0) : target + 2;
+            const fps = m.last_fps != null ? safeNum(m.last_fps, 0) : null;
+            const tdpNow = t.current_tdp != null ? safeNum(t.current_tdp, 0) : null;
+            const temp = f.current_temperature != null ? safeNum(f.current_temperature, 0) : null;
+            const pwm = f.pwm_percent?.length && f.pwm_percent[0] != null ? safeNum(f.pwm_percent[0], 0) : null;
+            const rpm = f.fan_rpm?.length && f.fan_rpm[0] != null ? f.fan_rpm[0] : null;
+            const phase = !enabled ? 'off' : (m.phase || (m.state === 'waiting' ? 'waiting' : 'holding'));
+            const fpsColor = fps == null || !enabled ? undefined : fps >= goal - 2 ? COLORS.ok : fps >= goal - 6 ? COLORS.warn : COLORS.bad;
+            const noFps = enabled && (phase === 'waiting' || fps == null);
+            // --- игра и экран одной строкой
+            const displayText = (() => {
+                const d = String(m.display || '');
+                const i = d.indexOf('-');
+                if (i < 0)
+                    return '';
+                const res = d.slice(i + 1).replace('x', '×');
+                return d.slice(0, i) === 'handheld' ? tr('display.handheld', res) : tr('display.external', res);
+            })();
+            const levels = m.game_levels && m.game_levels.length
+                ? Array.from(new Set(m.game_levels.slice(-8).map((v) => Math.round(Number(v))))).sort((a, b) => a - b).join(' / ')
+                : '';
+            const gameLine = [
+                m.game && m.game !== 'default' ? (m.game_name || m.game) : tr('game.unknown'),
+                displayText,
+                levels ? tr('game.levels', levels) : '',
+            ].filter(Boolean).join(' · ');
+            const errors = [];
+            if (error)
+                errors.push(error);
+            (stats && stats.init_errors || []).forEach((e) => errors.push(`${tr('init.title')}: ${String(e)}`));
+            const language = cfg.language === 'en' || cfg.language === 'ru' ? cfg.language : 'auto';
+            const setLanguage = async (lang) => {
+                setCfg((x) => ({ ...x, language: lang }));
+                const ok = await rpc('set_language', { language: lang });
+                if (!ok)
+                    setError(tr('err.lang'));
+                await refresh();
+            };
+            const languageRow = (React.createElement(ui.PanelSectionRow, null,
+                React.createElement(ui.DropdownItem, { label: tr('lang.title'), selectedOption: language, rgOptions: [{ data: 'auto', label: tr('lang.auto') }, { data: 'en', label: tr('lang.en') }, { data: 'ru', label: tr('lang.ru') }], onChange: (o) => setLanguage(o.data) })));
             return React.createElement(React.Fragment, null,
-                React.createElement(ui.PanelSection, { title: tr('section.plugin') },
+                React.createElement(ui.PanelSection, null,
+                    errors.map((e, i) => React.createElement(ui.PanelSectionRow, { key: `e${i}` },
+                        React.createElement(Banner, { text: e }))),
                     React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.ToggleField, { label: tr('toggle.plugin'), description: pluginDesc, checked: pluginEnabled, onChange: togglePlugin }))),
-                pluginActive && React.createElement(ui.PanelSection, { title: tr('section.autotdp') },
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.ToggleField, { label: tr('toggle.autotdp'), description: enabled ? tr('toggle.running') : tr('toggle.stopped'), checked: enabled, onChange: toggle }))),
-                (error || (stats && stats.init_errors && stats.init_errors.length)) && React.createElement(ui.PanelSection, { title: tr('section.status') },
-                    error && React.createElement(ui.PanelSectionRow, null,
-                        React.createElement("span", { style: { color: '#ffb3b3' } }, error)),
-                    stats && stats.init_errors && stats.init_errors.map((e, i) => React.createElement(ui.PanelSectionRow, { key: i },
-                        React.createElement("span", { style: { color: '#ffb3b3' } },
-                            tr('init.title'),
-                            ": ",
-                            String(e))))),
-                pluginActive && React.createElement(React.Fragment, null,
-                    React.createElement(ui.PanelSection, { title: tr('section.fps') },
-                        React.createElement(Row, { label: tr('row.build'), value: (stats && stats.build) || tr('row.build.old') }),
-                        React.createElement(Row, { label: tr('row.tdpBackend'), value: t.backend || 'none' }),
-                        React.createElement(Row, { label: tr('row.currentTdp'), value: t.current_tdp != null ? `${safeNum(t.current_tdp, 0).toFixed(1)} W` : '—' }),
-                        React.createElement(Row, { label: tr('row.tdpSource'), value: t.tdp_source === 'setpoint' ? tr('row.tdpSource.setpoint') : (t.tdp_source || '—') }),
-                        React.createElement(Row, { label: tr('row.avgFps'), value: m.last_fps != null ? safeNum(m.last_fps, 0).toFixed(1) : '—' }),
-                        React.createElement(Row, { label: tr('row.effectiveGoal'), value: m.effective_target_fps != null ? String(m.effective_target_fps) : '—' }),
-                        React.createElement(Row, { label: tr('row.game'), value: m.game && m.game !== 'default' ? (m.game_name || m.game) : tr('row.game.unknown') }),
-                        React.createElement(Row, { label: tr('row.display'), value: (() => { const d = String(m.display || ''); const i = d.indexOf('-'); if (i < 0)
-                                return tr('row.display.unknown'); const kind = d.slice(0, i), res = d.slice(i + 1).replace('x', '×'); return kind === 'handheld' ? tr('row.display.handheld', res) : tr('row.display.external', res); })() }),
-                        React.createElement(Row, { label: tr('row.levels'), value: m.game_levels && m.game_levels.length ? Array.from(new Set(m.game_levels.slice(-8).map((v) => Math.round(Number(v))))).sort((a, b) => a - b).join(', ') + ' W' : tr('row.levels.none') }),
-                        React.createElement(Row, { label: tr('row.tdpDecision'), value: m.tdp_hold_level != null ? tr('row.tdpCapped', m.tdp_hold_level) : (m.tdp_decision || '—') }),
-                        React.createElement(Row, { label: tr('search.state'), value: tr('search.state.' + ((m.tdp_search && m.tdp_search.state) || 'idle')) }),
-                        React.createElement(Row, { label: tr('search.good'), value: (m.tdp_search && m.tdp_search.good_w) != null ? `${m.tdp_search.good_w} W` : tr('search.unknown') }),
-                        React.createElement(Row, { label: tr('search.bad'), value: (m.tdp_search && m.tdp_search.bad_w) != null ? `${m.tdp_search.bad_w} W` : tr('search.unknown') }),
-                        React.createElement(Row, { label: tr('search.probes'), value: (m.tdp_search && (m.tdp_search.last_search_probes || m.tdp_search.probes)) || 0 }),
-                        React.createElement(Row, { label: tr('row.cpuLoad'), value: m.last_cpu_load != null ? `${safeNum(m.last_cpu_load, 0).toFixed(1)}%` : '—' }),
-                        React.createElement(Row, { label: tr('row.gpuLoad'), value: m.last_gpu_load != null ? `${safeNum(m.last_gpu_load, 0).toFixed(1)}%` : '—' }),
-                        React.createElement(Row, { label: tr('row.controller'), value: m.state || tr('row.controller.stopped') }),
+                        React.createElement(ui.ToggleField, { label: tr('toggle.plugin'), checked: pluginEnabled, onChange: togglePlugin, description: !pluginEnabled ? tr('toggle.plugin.off') : guiPid ? tr('toggle.plugin.gui') : tr('toggle.plugin.on') })),
+                    pluginActive && React.createElement(React.Fragment, null,
+                        React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(ui.ToggleField, { label: tr('toggle.autotdp'), checked: enabled, onChange: toggleAuto, description: enabled ? tr('toggle.autotdp.on') : tr('toggle.autotdp.off') })),
+                        React.createElement(ui.PanelSectionRow, null,
+                            React.createElement("div", { style: { width: '100%' } },
+                                React.createElement(Tiles, { tiles: [
+                                        { label: tr('sum.fps'), value: fps != null ? fps.toFixed(0) : '—', sub: enabled ? tr('sum.goal', goal) : '', color: fpsColor },
+                                        { label: tr('sum.tdp'), value: tdpNow != null ? tdpNow.toFixed(0) : '—', sub: W },
+                                        { label: tr('sum.temp'), value: temp != null ? temp.toFixed(0) : '—', sub: '°C' },
+                                    ] }),
+                                React.createElement(StatusLine, { text: tr('phase.' + phase), tone: PHASE_TONE[phase] || 'dim' }),
+                                enabled && React.createElement(HistoryChart, { history: m.history || [], goal: goal, maxTdp: maxTdp, legend: tr('chart.legend'), unitW: W }),
+                                React.createElement("div", { style: { fontSize: 12, color: COLORS.dim, marginTop: 6 } }, gameLine))),
+                        noFps && React.createElement(ui.PanelSectionRow, null,
+                            React.createElement(Banner, { tone: "warn", text: tr('warn.noFps') })),
                         React.createElement(ui.PanelSectionRow, null,
                             React.createElement(ui.SliderField, { label: tr('slider.targetFps'), value: target, min: 30, max: 120, step: 5, showValue: true, onChange: (v) => updateMonitorParam('target_fps', v) })),
+                        React.createElement(FoldHeader, { title: tr('fold.limits', minTdp, maxTdp), open: limitsOpen, onToggle: toggleLimits }),
+                        limitsOpen && React.createElement(React.Fragment, null,
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.SliderField, { label: tr('slider.minTdp'), value: minTdp, min: 5, max: maxTdp, step: 1, showValue: true, valueSuffix: ` ${W}`, onChange: (v) => updateMonitorParam('min_tdp', v) })),
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.SliderField, { label: tr('slider.maxTdp'), value: maxTdp, min: minTdp, max: 80, step: 1, showValue: true, valueSuffix: ` ${W}`, onChange: (v) => updateMonitorParam('max_tdp', v) })),
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.SliderField, { label: tr('slider.startTdp'), description: enabled ? tr('slider.startTdp.on') : tr('slider.startTdp.off'), value: initialTdp, min: 5, max: 80, step: 1, showValue: true, valueSuffix: ` ${W}`, onChange: async (v) => { const ok = await save('initial_tdp', v); if (ok && !enabled)
+                                        await rpc('set_tdp', { value: v }); } }))))),
+                pluginActive && React.createElement(ui.PanelSection, { title: tr('section.fan') },
+                    !f.available && React.createElement(ui.PanelSectionRow, null,
+                        React.createElement("span", { style: { color: COLORS.dim, fontSize: 13 } }, tr('fan.notDetected'))),
+                    f.available && React.createElement(React.Fragment, null,
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.SliderField, { label: tr('slider.startTdp'), description: enabled ? tr('slider.startTdp.on') : tr('slider.startTdp.off'), value: initialTdp, min: 5, max: 80, step: 1, showValue: true, valueSuffix: " W", onChange: async (v) => { const ok = await save('initial_tdp', v); if (ok && !enabled)
-                                    await rpc('set_tdp', { value: v }); } })),
-                        React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.SliderField, { label: tr('slider.minTdp'), value: minTdp, min: 5, max: maxTdp, step: 1, showValue: true, valueSuffix: " W", onChange: (v) => updateMonitorParam('min_tdp', v) })),
-                        React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.SliderField, { label: tr('slider.maxTdp'), value: maxTdp, min: minTdp, max: 80, step: 1, showValue: true, valueSuffix: " W", onChange: (v) => updateMonitorParam('max_tdp', v) })),
-                        React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.ToggleField, { label: tr('toggle.loadBoost'), description: cfg.load_boost_enabled ? tr('toggle.loadBoost.on', safeNum(cfg.load_boost_threshold, 95)) : tr('toggle.loadBoost.off'), checked: !!cfg.load_boost_enabled, onChange: async (v) => { const ok = await save('load_boost_enabled', v); if (ok)
+                            React.createElement(ui.ToggleField, { label: tr('fan.control'), checked: !!cfg.fan_control?.enabled, description: cfg.fan_control?.enabled ? tr('fan.control.on') : tr('fan.control.off'), onChange: async (v) => { const ok = await rpc(v ? 'enable_fan_control' : 'disable_fan_control'); if (ok)
                                     await refresh(); } })),
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.SliderField, { label: tr('slider.interval'), description: tr('slider.interval.desc'), value: safeNum(cfg.check_interval_sec, 1), min: 0.5, max: 5, step: 0.5, showValue: true, valueSuffix: " s", onChange: async (v) => { setCfg((x) => ({ ...x, check_interval_sec: v })); const ok = await rpc('set_check_interval', { seconds: v }); if (!ok)
-                                    setError(tr('err.save')); } })),
+                            React.createElement("div", { style: { width: '100%' } },
+                                React.createElement(CurveGraph, { points: curveFromConfig(cfg), height: 140, now: { t: temp, s: pwm } }),
+                                React.createElement("div", { style: { fontSize: 12, color: COLORS.tdp, textAlign: 'right', marginTop: 2 } }, tr('fan.caption', temp != null ? temp.toFixed(0) : '—', pwm != null ? pwm.toFixed(0) : '—', rpm != null ? rpm : '—')))),
                         React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.SliderField, { label: tr('slider.threshold'), value: safeNum(cfg.load_boost_threshold, 95), min: 90, max: 100, step: 1, showValue: true, valueSuffix: "%", onChange: (v) => save('load_boost_threshold', v) }))),
-                    React.createElement(ui.PanelSection, { title: tr('section.fan') },
-                        React.createElement(Row, { label: tr('fan.controller'), value: f.available ? tr('fan.controller.ok') : tr('fan.controller.none') }),
-                        React.createElement(Row, { label: tr('fan.temp'), value: f.current_temperature != null ? `${safeNum(f.current_temperature, 0).toFixed(1)} °C` : '—' }),
-                        React.createElement(Row, { label: tr('fan.channels'), value: f.channels || 0 }),
-                        React.createElement(Row, { label: tr('fan.rpm'), value: f.fan_rpm?.length ? f.fan_rpm.map((v) => v == null ? '—' : v).join(', ') : '—' }),
-                        React.createElement(Row, { label: tr('fan.pwm'), value: f.pwm_percent?.length ? f.pwm_percent.map((v) => v == null ? '—' : `${v.toFixed(1)}%`).join(', ') : '—' }),
-                        React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.ToggleField, { label: tr('fan.control'), description: cfg.fan_control?.enabled ? tr('fan.control.on') : tr('fan.control.off'), checked: !!cfg.fan_control?.enabled, disabled: !f.available, onChange: async (v) => { const ok = await rpc(v ? 'enable_fan_control' : 'disable_fan_control'); if (ok)
-                                    await refresh(); } })),
-                        !f.available && React.createElement(ui.PanelSectionRow, null,
-                            React.createElement("span", { style: { color: '#94a3b8' } }, tr('fan.notDetected'))),
-                        f.available && React.createElement(React.Fragment, null,
+                            React.createElement(ui.ButtonItem, { layout: "below", onClick: () => {
+                                    const lang = cfg.language;
+                                    setCurveMsg('');
+                                    ui.showModal(React.createElement(FanCurveModal, { initial: curveFromConfig(cfg), tr: (k, ...a) => translate(lang, k, ...a), now: { t: temp, s: null }, onSave: async (pts) => {
+                                            const obj = {};
+                                            pts.forEach(p => { obj[String(Math.round(p.t))] = Math.round(p.s); });
+                                            const res = await rpc('set_fan_curve', { curve: obj });
+                                            if (res && res.ok) {
+                                                setCurveMsg(tr('curve.saved'));
+                                                await refresh();
+                                                return { ok: true };
+                                            }
+                                            return { ok: false, error: (res && res.error) || tr('search.unknown') };
+                                        } }));
+                                } }, tr('curve.edit'))),
+                        curveMsg && React.createElement(ui.PanelSectionRow, null,
+                            React.createElement("span", { style: { color: COLORS.ok, fontSize: 12 } }, curveMsg)))),
+                React.createElement(ui.PanelSection, null,
+                    React.createElement(FoldHeader, { title: tr('fold.advanced'), open: advOpen, onToggle: toggleAdv }),
+                    advOpen && React.createElement(React.Fragment, null,
+                        pluginActive && React.createElement(React.Fragment, null,
                             React.createElement(ui.PanelSectionRow, null,
-                                React.createElement("div", { style: { width: '100%' } },
-                                    React.createElement(CurveGraph, { points: curveFromConfig(cfg), height: 150, now: { t: f.current_temperature != null ? safeNum(f.current_temperature, 0) : null,
-                                            s: f.pwm_percent?.length && f.pwm_percent[0] != null ? safeNum(f.pwm_percent[0], 0) : null } }),
-                                    f.current_temperature != null && React.createElement("div", { style: { fontSize: 12, color: '#ffb347', textAlign: 'right' } }, tr('curve.now', safeNum(f.current_temperature, 0).toFixed(0), f.pwm_percent?.length && f.pwm_percent[0] != null ? safeNum(f.pwm_percent[0], 0).toFixed(0) : '—')))),
+                                React.createElement(ui.ToggleField, { label: tr('toggle.loadBoost'), description: cfg.load_boost_enabled ? tr('toggle.loadBoost.on', safeNum(cfg.load_boost_threshold, 95)) : tr('toggle.loadBoost.off'), checked: !!cfg.load_boost_enabled, onChange: async (v) => { const ok = await save('load_boost_enabled', v); if (ok)
+                                        await refresh(); } })),
+                            cfg.load_boost_enabled && React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.SliderField, { label: tr('slider.threshold'), value: safeNum(cfg.load_boost_threshold, 95), min: 90, max: 100, step: 1, showValue: true, valueSuffix: "%", onChange: (v) => save('load_boost_threshold', v) })),
                             React.createElement(ui.PanelSectionRow, null,
-                                React.createElement(ui.ButtonItem, { layout: "below", onClick: () => {
-                                        const lang = cfg.language;
-                                        ui.showModal(React.createElement(FanCurveModal, { initial: curveFromConfig(cfg), tr: (k, ...a) => translate(lang, k, ...a), now: { t: f.current_temperature != null ? safeNum(f.current_temperature, 0) : null, s: null }, onSave: async (pts) => {
-                                                const obj = {};
-                                                pts.forEach(p => { obj[String(Math.round(p.t))] = Math.round(p.s); });
-                                                const res = await rpc('set_fan_curve', { curve: obj });
-                                                if (res && res.ok) {
-                                                    setCurveMsg(tr('curve.saved'));
-                                                    await refresh();
-                                                    return { ok: true };
-                                                }
-                                                return { ok: false, error: (res && res.error) || tr('search.unknown') };
-                                            } }));
-                                    } }, tr('curve.edit'))),
-                            curveMsg && React.createElement(ui.PanelSectionRow, null,
-                                React.createElement("span", { style: { color: '#dbeafe' } }, curveMsg)))),
-                    React.createElement(ui.PanelSection, { title: tr('section.source') },
-                        React.createElement(ui.PanelSectionRow, null,
-                            React.createElement("span", { style: { color: '#dbeafe' } }, tr('src.note'))),
-                        React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(Row, { label: tr('src.source'), value: m.fps_source || tr('src.sourceDefault') })),
-                        React.createElement(ui.PanelSectionRow, null,
-                            React.createElement(ui.ToggleField, { label: tr('src.hud'), description: cfg.mangohud_display ? tr('src.hud.on') : tr('src.hud.off'), checked: !!cfg.mangohud_display, onChange: async (v) => { const ok = await rpc('set_mangohud_display', { enabled: v }); if (ok)
-                                    await refresh(); } })))),
-                React.createElement(ui.PanelSection, { title: tr('lang.title') },
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.ToggleField, { label: tr('lang.en'), description: cfg.language === 'en' ? '✓' : '', checked: cfg.language === 'en', onChange: async (v) => { if (!v)
-                                return; const ok = await rpc('set_language', { language: 'en' }); if (ok)
-                                await refresh();
-                            else
-                                setError(tr('err.lang')); } })),
-                    React.createElement(ui.PanelSectionRow, null,
-                        React.createElement(ui.ToggleField, { label: tr('lang.ru'), description: cfg.language === 'ru' ? '✓' : '', checked: cfg.language === 'ru', onChange: async (v) => { if (!v)
-                                return; const ok = await rpc('set_language', { language: 'ru' }); if (ok)
-                                await refresh();
-                            else
-                                setError(tr('err.lang')); } }))));
+                                React.createElement(ui.SliderField, { label: tr('slider.interval'), description: tr('slider.interval.desc'), value: safeNum(cfg.check_interval_sec, 1), min: 0.5, max: 5, step: 0.5, showValue: true, valueSuffix: " s", onChange: async (v) => { setCfg((x) => ({ ...x, check_interval_sec: v })); const ok = await rpc('set_check_interval', { seconds: v }); if (!ok)
+                                        setError(tr('err.save')); } })),
+                            React.createElement(ui.PanelSectionRow, null,
+                                React.createElement(ui.ToggleField, { label: tr('src.hud'), description: cfg.mangohud_display ? tr('src.hud.on') : tr('src.hud.off'), checked: !!cfg.mangohud_display, onChange: async (v) => { const ok = await rpc('set_mangohud_display', { enabled: v }); if (ok)
+                                        await refresh(); } }))),
+                        languageRow),
+                    React.createElement(FoldHeader, { title: tr('fold.diag'), open: diagOpen, onToggle: toggleDiag }),
+                    diagOpen && React.createElement(ui.PanelSectionRow, null,
+                        React.createElement("div", { style: { width: '100%' } },
+                            React.createElement(InfoRow, { label: tr('row.build'), value: (stats && stats.build) || tr('row.build.old') }),
+                            React.createElement(InfoRow, { label: tr('row.tdpBackend'), value: t.backend || 'none' }),
+                            React.createElement(InfoRow, { label: tr('row.tdpSource'), value: t.tdp_source === 'setpoint' ? tr('row.tdpSource.setpoint') : t.tdp_source }),
+                            React.createElement(InfoRow, { label: tr('row.controller'), value: m.state || tr('row.controller.stopped') }),
+                            React.createElement(InfoRow, { label: tr('row.tdpDecision'), value: m.tdp_hold_level != null ? tr('row.tdpCapped', m.tdp_hold_level) : m.tdp_decision }),
+                            React.createElement(InfoRow, { label: tr('search.state'), value: tr('search.state.' + ((m.tdp_search && m.tdp_search.state) || 'idle')) }),
+                            React.createElement(InfoRow, { label: tr('search.good'), value: (m.tdp_search && m.tdp_search.good_w) != null ? `${m.tdp_search.good_w} ${W}` : null }),
+                            React.createElement(InfoRow, { label: tr('search.bad'), value: (m.tdp_search && m.tdp_search.bad_w) != null ? `${m.tdp_search.bad_w} ${W}` : null }),
+                            React.createElement(InfoRow, { label: tr('search.probes'), value: (m.tdp_search && (m.tdp_search.last_search_probes || m.tdp_search.probes)) || 0 }),
+                            React.createElement(InfoRow, { label: tr('row.cpuLoad'), value: m.last_cpu_load != null ? `${safeNum(m.last_cpu_load, 0).toFixed(0)}%` : null }),
+                            React.createElement(InfoRow, { label: tr('row.gpuLoad'), value: m.last_gpu_load != null ? `${safeNum(m.last_gpu_load, 0).toFixed(0)}%` : null }),
+                            React.createElement(InfoRow, { label: tr('src.source'), value: m.fps_source ? String(m.fps_source).split('/').pop() : tr('src.sourceDefault') }),
+                            React.createElement(InfoRow, { label: tr('fan.controller'), value: f.available ? tr('fan.controller.ok', f.channels || 0) : tr('fan.controller.none') })))));
         };
     }
     // Иконка плагина: микросхема с молнией (управление мощностью чипа).

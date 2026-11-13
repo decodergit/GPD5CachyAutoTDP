@@ -1,3 +1,17 @@
+## 3.7.0
+
+Redesigned panel: less text, the important things first.
+
+- **Summary on top:** three tiles — FPS (green / amber / red against the goal, with the goal underneath), TDP and temperature — and one status line with a coloured dot: holding the target, raising TDP, lowering TDP, looking for the lowest TDP, short at the TDP limit, high-load boost, waiting for FPS, Auto TDP off.
+- **Last-minute chart** of FPS and TDP with the goal as a dashed line. The history is kept by the backend, so it does not reset when the menu is reopened.
+- **Game, display mode and working levels** in one line under the summary.
+- Main controls first: Plugin enabled, Auto TDP, Target FPS. **TDP limits** (min, max, start TDP), **More settings** (high-load boost and threshold, poll interval, MangoHud overlay, language) and **Diagnostics** (build, backend, search state, loads, FPS source, fan controller) are collapsed; they stay as left while the plugin is loaded.
+- **Fan section:** the curve chart with one caption (°C · % · rpm) instead of five rows.
+- The MangoHud / FPS-limit note is shown only when there is no FPS; errors are shown as a banner at the very top.
+- Shorter descriptions under toggles and sliders.
+- **Language:** one selector (Auto / English / Русский) instead of two toggles. *Auto* follows the Steam language and is the default for new configs; existing configs keep their choice.
+- Build row shows 3.7.0.
+
 ## 3.6.0
 
 - **Working TDP levels are kept per display mode.** The same game needs different power handheld on the built-in 2K screen and docked on a 2K or 4K monitor. Levels are now stored per game *and* display mode, e.g. `steam:1091500@handheld-1920x1080`, `@external-2560x1440`, `@external-3840x2160`, so a menu exit on the built-in screen no longer jumps to the 4K level (or the other way round).
