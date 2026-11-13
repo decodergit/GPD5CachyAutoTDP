@@ -239,6 +239,14 @@ class FpsHoldController:
         if last is None or abs(last - cur_w) >= 1.0 or now - self._level_recorded_t >= self.LEVEL_REFRESH_SEC:
             self._record_level(now, cur_w)
 
+    def typical_level(self) -> Optional[float]:
+        """Медиана последних рабочих уровней (без привязки к текущему TDP)."""
+        vals = sorted(self._levels[-8:])
+        if not vals:
+            return None
+        n = len(vals)
+        return vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2.0
+
     def recall_level(self, cur_w: float) -> Optional[float]:
         """Типичный рабочий уровень выше текущего: медиана последних таких уровней."""
         above = [w for w in self._levels[-8:] if w >= cur_w + self.RECALL_MIN_GAP_W]

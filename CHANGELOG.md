@@ -1,3 +1,12 @@
+## 3.6.0
+
+- **Working TDP levels are kept per display mode.** The same game needs different power handheld on the built-in 2K screen and docked on a 2K or 4K monitor. Levels are now stored per game *and* display mode, e.g. `steam:1091500@handheld-1920x1080`, `@external-2560x1440`, `@external-3840x2160`, so a menu exit on the built-in screen no longer jumps to the 4K level (or the other way round).
+- The display mode comes from `/sys/class/drm`: which outputs are enabled (built-in eDP or external DP/HDMI) and their native resolution. Any enabled external output means docked; with several, the largest one counts.
+- **Dock / undock mid-game:** when the mode changes and that mode already has saved levels, TDP goes straight to its typical level (median of recent levels) instead of waiting for an FPS drop or a long search down. In simulation, docking from 35 W to a 4K screen that needs 68 W and undocking back caused no FPS drop at all.
+- The FPS section shows the display mode next to the game.
+- Levels saved by 3.4.0–3.5.0 (keyed by game only) are not reused: the mode they were learned in is unknown.
+- Build row shows 3.6.0.
+
 ## 3.5.0
 
 - **RyzenAdj ships with the plugin.** `bin/ryzenadj` (RyzenAdj v0.18.0, the same file PowerControl v3.15.1 ships) is now in the repository and in the Decky archive, so PowerControl is no longer needed, not even for the first launch. RyzenAdj stays under LGPL-3.0-or-later: the license texts are in `bin/licenses/`, the source link and checksum in `bin/README.txt` and `THIRD_PARTY_NOTICES.md`.

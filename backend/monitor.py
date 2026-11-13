@@ -16,7 +16,7 @@ from typing import Any
 from .tdp_controller import TDPController
 from .fps_reader import FPSReader
 from .fps_hold_controller import FpsHoldController
-from .game_stats import DEFAULT_GAME, GameStats, detect_game, steam_game_name
+from .game_stats import DEFAULT_GAME, GameStats, detect_display, detect_game, stats_key, steam_game_name
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,8 @@ class TDPMonitor:
         self.game_stats = GameStats(getattr(config_manager, 'settings_dir', None))
         self.game = None
         self.game_name = None
+        self.display = None          # режим экрана: handheld-1920x1080, external-3840x2160 ...
+        self.stats_key = None        # игра@режим: ключ рабочих уровней
         self._game_checked = -1e9
         self.fps_ctl.on_level = self._save_levels
         self.tdp_hold_level = None
@@ -169,8 +171,9 @@ class TDPMonitor:
     # ------------------------------------------------------------------
     # Игра и её статистика
     # ------------------------------------------------------------------
-    def _update_game(self):
-        """Раз в GAME_DETECT_SEC определяет игру; при смене загружает её рабочие уровни."""
+    def _update_game(self, apply_level=False):
+        """Раз в GAME_DETECT_SEC определяет игру и режим экрана; при смене любого из них
+        загружает рабочие уровни именно этой пары (в руках и в доке на 4K — разные)."""
         now = time.monotonic()
         if now - self._game_checked < GAME_DETECT_SEC:
             return
@@ -180,18 +183,37 @@ class TDPMonitor:
         except Exception as e:  # noqa: BLE001
             logger.debug('game detection failed: %s', e)
             game = DEFAULT_GAME
-        if game == self.game:
+        try:
+            display = detect_display()
+        except Exception as e:  # noqa: BLE001
+            logger.debug('display detection failed: %s', e)
+            display = None
+        key = stats_key(game, display)
+        if key == self.stats_key:
             return
-        self.game = game
-        self.game_name = self.game_stats.name(game) or steam_game_name(game)
-        # Потолки и границы прошлой игры к новой не относятся.
+        if game != self.game:
+            self.game_name = self.game_stats.name_for_game(game) or steam_game_name(game)
+        self.game, self.display, self.stats_key = game, display, key
+        # Потолки и границы прошлой игры или прошлого режима экрана здесь не действуют.
         self.fps_ctl.reset()
-        self.fps_ctl.set_levels(self.game_stats.levels(game))
-        logger.info('AutoTDP: game %s (%s), saved levels %s', game, self.game_name, self.fps_ctl.levels())
+        self.fps_ctl.set_levels(self.game_stats.levels(key))
+        logger.info('AutoTDP: game %s (%s), display %s, saved levels %s',
+                    game, self.game_name, display, self.fps_ctl.levels())
+        # Смена режима посреди игры (док <-> в руках): сразу ставим типичный уровень
+        # нового режима, не дожидаясь просадки или долгого поиска вниз.
+        typical = self.fps_ctl.typical_level()
+        if apply_level and typical is not None and self.last_tdp is not None \
+                and abs(typical - float(self.last_tdp)) >= 4.0:
+            try:
+                if self._apply(typical):
+                    self.tdp_decision = f'режим {display}: уровень {typical:g} W'
+                    logger.info('AutoTDP: switched to saved level %.0f W for %s', typical, key)
+            except Exception as e:  # noqa: BLE001
+                logger.warning('AutoTDP: applying saved level failed: %s', e)
 
     def _save_levels(self, levels):
-        if self.game:
-            self.game_stats.put_levels(self.game, levels, self.game_name)
+        if self.stats_key:
+            self.game_stats.put_levels(self.stats_key, levels, self.game_name)
 
     # ------------------------------------------------------------------
     # Установка TDP
@@ -223,7 +245,7 @@ class TDPMonitor:
         last_boost = 0.0
         while not self._stop.is_set():
             try:
-                self._update_game()
+                self._update_game(apply_level=True)
                 metrics = self.fps.read_metrics()
                 fps = metrics.get('fps')
                 cpu = metrics.get('cpu_load')
@@ -300,6 +322,7 @@ class TDPMonitor:
                 'tdp_search': self.fps_ctl.search_state(),
                 'game': self.game,
                 'game_name': self.game_name,
+                'display': self.display,
                 'game_levels': self.fps_ctl.levels(),
                 'recall_level': self.fps_ctl.recall_level(float(self.last_tdp)) if self.last_tdp is not None else None,
                 **self._stats,
